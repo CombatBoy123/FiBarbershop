@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="et">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fi Barbershop — kassa, arved, ladu</title>
+<meta name="description" content="Fi Barbershop Tartu — kiirmüük, arved, kassaraamat ja ladu ühes kohas.">
+<link rel="icon" href="assets/fi-logo.webp">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,100..900&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/app.css?v=3">
+</head>
+<body>
+
+<!-- ============================== LOGIN ============================== -->
+<section class="login" id="login" hidden>
+  <div class="loginside">
+    <img class="brandlogo" src="assets/fi-logo.webp" alt="Fi Barbershop">
+    <div>
+      <p class="loginclaim">Arved,<br>kassa ja<br>ladu ühes<br>kohas.</p>
+      <p class="loginsub">
+        Päevakassa, arved ettevõtetele ja Nishmani, Nõberu ning Uppercuti laoseis.
+        Andmed on serveris — sama seis igas seadmes.
+      </p>
+    </div>
+    <p class="loginfoot">Tartu · fibarbers.ee</p>
+  </div>
+
+  <div class="loginmain">
+    <form class="loginform" id="loginForm" autocomplete="on">
+      <p class="eyebrow">Konto</p>
+      <h1 class="h1" style="margin:0 0 8px">Logi sisse</h1>
+
+      <label class="fld">
+        <span class="lab">E-post</span>
+        <input class="inp" type="email" id="loginEmail" name="email"
+               autocomplete="username" required placeholder="info@fibarbers.ee">
+      </label>
+
+      <label class="fld">
+        <span class="lab">Parool</span>
+        <input class="inp" type="password" id="loginPassword" name="password"
+               autocomplete="current-password" required>
+      </label>
+
+      <p class="err" id="loginErr" role="alert"></p>
+      <button class="btnp wide" type="submit" id="loginBtn">Logi sisse</button>
+
+      <p class="lab" style="color:var(--tx3);font-weight:400;line-height:1.6">
+        Konto loob salongi omanik. Parooli unustamisel võta omanikuga ühendust.
+      </p>
+    </form>
+  </div>
+</section>
+
+<!-- =============================== APP =============================== -->
+<div class="app" id="app" hidden>
+  <nav class="nav noprint">
+    <div class="navleft">
+      <img class="brandlogo" src="assets/fi-logo.webp" alt="Fi Barbershop">
+      <div class="navtabs" id="navtabs" role="tablist">
+        <button class="navtab" type="button" data-tab="dash">Töölaud</button>
+        <button class="navtab" type="button" data-tab="pos">Kiirmüük</button>
+        <button class="navtab" type="button" data-tab="inv">Arved</button>
+        <button class="navtab" type="button" data-tab="cash">Kassaraamat</button>
+        <button class="navtab" type="button" data-tab="stock">Ladu</button>
+        <button class="navtab" type="button" data-tab="price">Hinnakiri</button>
+      </div>
+    </div>
+
+    <div class="navright">
+      <span class="navdate" id="navDate"></span>
+      <div class="tgl" role="group" aria-label="Teema">
+        <button type="button" data-theme="light" class="on">Hele</button>
+        <button type="button" data-theme="dark">Tume</button>
+      </div>
+      <button class="navtab" type="button" id="logoutBtn">Logi välja</button>
+    </div>
+  </nav>
+
+  <main class="wrap" id="view"></main>
+</div>
+
+<div class="toast hidden" id="toast" role="status" aria-live="polite"></div>
+
+<script type="module" src="js/main.js?v=3"></script>
+</body>
+</html>
