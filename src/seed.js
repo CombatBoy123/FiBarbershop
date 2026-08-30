@@ -13,17 +13,25 @@ const DEFAULT_SERVICES = [
 ];
 
 // Retail range carried in the shop: [name, ostuhind, müügihind].
+// The range actually carried in the shop, mirroring fibarbers.ee.
+// Purchase prices start at 0 on purpose: only the owner knows them, and an
+// invented ostuhind would corrupt the stock valuation from day one.
+// Run `npm run sync-products` afterwards to pull in the product photos.
 const DEFAULT_PRODUCTS = [
-  ["Uppercut Matte Pomade 100g", 12, 20],
-  ["Uppercut Deluxe Clay 70g", 12, 20],
-  ["Uppercut Featherweight 70g", 12, 20],
-  ["Uppercut Light Hold 90g", 13, 20],
-  ["Nõberu Ocean Spray 150ml", 13, 22],
-  ["Nõberu After Shave Balm 100ml", 15.5, 26],
-  ["Nõberu Hair Wax 100ml", 13, 22],
-  ["Nishman Hair Gel Sea Salt 300ml", 6.5, 12],
-  ["Fi Texture Powder 20g", 9, 15],
-  ["Fi Habemeõli 30ml", 10, 18],
+  ["Fi Texture Powder 20g", 0, 15],
+  ["Nishmani habeme- ja vuntsihooldusõli 30 ml", 0, 15],
+  ["Nishman must šampoon 2in1 10x20ml", 0, 25],
+  ["Nishman Curl Cream 200ml", 0, 15],
+  ["Nishman Hair Gel Sea Salt 300ml", 0, 12],
+  ["Nishman käte- ja näokreem granaatõun", 0, 12],
+  ["Nishman Kõõmavastane šampoon XL 400ml", 0, 15],
+  ["Nõberu Face & After Shave Balm – Tobacco Vanilla 100ml", 0, 26],
+  ["Nõberu Ocean Spray 150ml - Tobacco Vanilla", 0, 22],
+  ["Uppercut Deluxe Clay 70g", 0, 20],
+  ["Uppercut Deluxe Light Hold 90g", 0, 20],
+  ["Uppercut Deluxe Matte Pomade 100g", 0, 20],
+  ["Uppercut Deluxe Salt Spray 150ml", 0, 15],
+  ["Uppercut Deluxe Texture Cream 100g", 0, 20],
 ];
 
 async function seedDefaults(client, userId) {

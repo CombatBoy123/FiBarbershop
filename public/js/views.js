@@ -120,14 +120,14 @@ const lineSummary = (invoice) =>
 
 // The server allocates the real number when the sale is finished; this is the
 // number it will almost certainly get, shown so the operator can quote it.
-// Format is pp/kk/aa - xxx and the counter restarts each day.
+// Format is MMYY-NNN and the counter restarts every month.
 function expectedNr() {
-  const [yyyy, mm, dd] = todayISO().split("-");
-  const prefix = dd + "/" + mm + "/" + yyyy.slice(2);
+  const [yyyy, mm] = todayISO().split("-");
+  const prefix = mm + yyyy.slice(2) + "-";
   const seqs = S.invoices
     .filter((i) => String(i.nr).startsWith(prefix))
     .map((i) => Number(String(i.nr).split("-")[1]) || 0);
-  return prefix + " - " + String((seqs.length ? Math.max(...seqs) : 0) + 1).padStart(3, "0");
+  return prefix + String((seqs.length ? Math.max(...seqs) : 0) + 1).padStart(3, "0");
 }
 
 export function viewPos(actions) {
@@ -154,6 +154,9 @@ export function viewPos(actions) {
       class: "svc prod" + (out ? " out" : ""), type: "button", disabled: out,
       onclick: out ? null : () => actions.addLine({ productId: p.id, name: p.name, price: Number(p.price) }),
     },
+      p.image_url
+        ? h("img", { class: "prodimg", src: p.image_url, alt: "", loading: "lazy" })
+        : null,
       h("div", { class: "svcrow" },
         h("span", { class: "svcn", text: p.name }),
         h("span", { class: "svcp", text: num(p.price) })
@@ -457,7 +460,10 @@ export function viewStock(actions) {
   const stockRows = S.products.map((p) => {
     const st = stockStatus(p);
     return h("div", { class: "row", style: "grid-template-columns:1fr 70px 100px 110px" },
-      h("span", { class: "tr", text: p.name }),
+      h("span", { class: "tr namecell" },
+        p.image_url ? h("img", { class: "thumb", src: p.image_url, alt: "", loading: "lazy" }) : null,
+        h("span", { text: p.name })
+      ),
       h("span", { class: "tr mono r " + (st.cls === "pos" ? "" : st.cls), text: String(Number(p.stock)) }),
       h("span", { class: "tr mono r", text: num(Number(p.stock) * Number(p.cost)) }),
       h("span", { class: "pill r " + st.cls, text: st.label })
@@ -538,7 +544,10 @@ export function viewPrices(actions) {
 
   const productRows = S.products.map((p) =>
     h("div", { class: "row", style: "grid-template-columns:1fr 110px 110px" },
-      h("span", { class: "tr", text: p.name }),
+      h("span", { class: "tr namecell" },
+        p.image_url ? h("img", { class: "thumb", src: p.image_url, alt: "", loading: "lazy" }) : null,
+        h("span", { text: p.name })
+      ),
       inp({ type: "number", min: "0", step: "0.01", value: String(Number(p.cost)),
             "aria-label": "Ostuhind: " + p.name,
             onchange: (e) => actions.saveProduct(p.id, { cost: parseNum(e.target.value) }) }),

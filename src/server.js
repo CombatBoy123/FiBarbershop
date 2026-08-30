@@ -275,10 +275,10 @@ app.post(
     const name = String(req.body.name || "").trim();
     if (!name) return res.status(400).json({ error: "Toote nimi puudub." });
     const r = await query(
-      `INSERT INTO products (user_id, name, cost, price, sort_order)
-       VALUES ($1,$2,$3,$4,(SELECT COALESCE(MAX(sort_order)+1,0) FROM products WHERE user_id=$1))
+      `INSERT INTO products (user_id, name, cost, price, image_url, sort_order)
+       VALUES ($1,$2,$3,$4,$5,(SELECT COALESCE(MAX(sort_order)+1,0) FROM products WHERE user_id=$1))
        RETURNING *`,
-      [req.userId, name, num(req.body.cost), num(req.body.price)]
+      [req.userId, name, num(req.body.cost), num(req.body.price), String(req.body.image_url || "")]
     );
     res.status(201).json({ product: { ...r.rows[0], stock: 0 } });
   })
@@ -289,7 +289,8 @@ app.put(
   requireAuth,
   wrap(async (req, res) => {
     const r = await query(
-      `UPDATE products SET name = COALESCE($3, name), cost = COALESCE($4, cost), price = COALESCE($5, price)
+      `UPDATE products SET name = COALESCE($3, name), cost = COALESCE($4, cost),
+              price = COALESCE($5, price), image_url = COALESCE($6, image_url)
         WHERE id = $2 AND user_id = $1 RETURNING *`,
       [
         req.userId,
@@ -297,6 +298,7 @@ app.put(
         req.body.name === undefined ? null : String(req.body.name),
         req.body.cost === undefined ? null : num(req.body.cost),
         req.body.price === undefined ? null : num(req.body.price),
+        req.body.image_url === undefined ? null : String(req.body.image_url),
       ]
     );
     if (!r.rowCount) return res.status(404).json({ error: "Toodet ei leitud." });
@@ -368,15 +370,17 @@ app.post(
       const settings = s.rows[0];
       if (!settings) throw Object.assign(new Error("Seaded puuduvad."), { status: 400 });
 
-      // Numbering restarts every day: the date is already in the number, so
-      // the counter only has to be unique within that day.
-      const seq = String(settings.invoice_day || "") === date ? settings.invoice_seq + 1 : 1;
+      // Format is MMYY-NNN, so the number identifies a month, not a day.
+      // The counter therefore restarts monthly: resetting it daily would mint
+      // 0826-001 twice in August and collide with UNIQUE(user_id, nr).
+      const month = date.slice(0, 7);
+      const seq = String(settings.invoice_month || "") === month ? settings.invoice_seq + 1 : 1;
       await client.query(
-        "UPDATE settings SET invoice_day = $2, invoice_seq = $3, invoice_year = $4 WHERE user_id = $1",
-        [req.userId, date, seq, Number(date.slice(0, 4))]
+        "UPDATE settings SET invoice_month = $2, invoice_seq = $3, invoice_year = $4 WHERE user_id = $1",
+        [req.userId, month, seq, Number(date.slice(0, 4))]
       );
-      const [yyyy, mm, dd] = date.split("-");
-      const nr = dd + "/" + mm + "/" + yyyy.slice(2) + " - " + String(seq).padStart(3, "0");
+      const [yyyy, mm] = date.split("-");
+      const nr = mm + yyyy.slice(2) + "-" + String(seq).padStart(3, "0");
 
       // Stock is checked inside the transaction so two tills selling the last
       // jar at once cannot both succeed.
