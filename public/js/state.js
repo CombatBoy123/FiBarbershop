@@ -188,4 +188,6 @@ export function stockStatus(product) {
   return { label: "OK", cls: "pos" };
 }
 
+export const METHOD_LABEL = { cash: "Sularaha", card: "Kaart", split: "Jaga" };
+
 export const productById = (id) => S.products.find((p) => p.id === id) || null;

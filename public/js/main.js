@@ -4,7 +4,7 @@
 import { api, setToken, getToken, ApiError } from "./api.js";
 import {
   S, applyState, addLine, removeLine, updateLine, clearDraft, setMethod,
-  syncPayment, draftTotal, draftVat, paymentMismatch,
+  syncPayment, draftTotal, draftVat, paymentMismatch, METHOD_LABEL,
 } from "./state.js";
 import { VIEWS } from "./views.js";
 import { clear, toast, eur, num, dateET, todayISO, parseNum, downloadCSV } from "./util.js";
@@ -69,8 +69,14 @@ function refreshTotals() {
         ? "Vahe " + num(Math.abs(mismatch) / 100) + " € — sularaha ja kaart kokku peavad võrduma summaga."
         : "";
   }
+  const blocked = !S.draft.lines.length || mismatch !== 0;
   const finish = document.getElementById("posFinish");
-  if (finish) finish.disabled = !S.draft.lines.length || mismatch !== 0;
+  if (finish) finish.disabled = blocked;
+
+  set("barTotal", eur(total));
+  set("barCount", S.draft.lines.length + " rida · " + METHOD_LABEL[S.draft.method]);
+  const barFinish = document.getElementById("barFinish");
+  if (barFinish) barFinish.disabled = blocked;
 }
 
 // A failed call is either a dead session or something the user should read.

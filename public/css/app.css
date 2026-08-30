@@ -173,6 +173,7 @@ a:hover { color: var(--acc); }
          border:1px solid var(--line); }
 .grid2 { display:grid; grid-template-columns:repeat(2,1fr); gap:1px; background:var(--line);
          border:1px solid var(--line); }
+.tblwrap { overflow-x:auto; -webkit-overflow-scrolling:touch; }
 .tbl { border:1px solid var(--line); background:var(--card); }
 .row { border-bottom:1px solid var(--line2); padding:11px 16px; display:grid; gap:10px; }
 .row:last-child { border-bottom:none; }
@@ -222,6 +223,10 @@ a:hover { color: var(--acc); }
 .loginmain { background:var(--surf); padding:48px; display:flex; align-items:center; }
 .loginform { width:min(400px,100%); display:flex; flex-direction:column; gap:14px; }
 
+/* Fixed pay bar for phones: on a till you tap items, then pay, and the
+   payment panel is far below the product grid on a narrow screen. */
+.paybarfix { display:none; }
+
 /* toast */
 .toast { position:fixed; left:50%; bottom:26px; transform:translateX(-50%); background:#0A0E12;
          color:#fff; padding:12px 20px; font:500 13px "IBM Plex Sans",sans-serif;
@@ -237,10 +242,59 @@ a:hover { color: var(--acc); }
   .loginmain { padding:32px; }
 }
 
-@media (max-width:640px) {
-  .wrap { padding:14px; }
-  .nav { padding:10px 12px; flex-wrap:wrap; }
-  .a4 { padding:20px; }
+@media (max-width:760px) {
+  .wrap { padding:12px; gap:14px; }
+  .nav { padding:8px 10px; gap:8px; }
+  .navleft { gap:10px; flex:1 1 auto; min-width:0; }
+  .navright { gap:8px; }
+  .brandlogo { height:30px; }
+  .navdate { display:none; }
+  .navtabs { gap:0; -webkit-overflow-scrolling:touch; scrollbar-width:none; }
+  .navtabs::-webkit-scrollbar { display:none; }
+  .navtab { padding:6px 10px; font-size:12.5px; }
+  .tgl button { padding:4px 7px; font-size:10px; }
+
+  .h1 { font-size:24px; line-height:26px; }
+  .head { gap:12px; }
+  .headacts { width:100%; margin-left:0; }
+  .btnp, .btng { padding:11px 14px; font-size:13px; flex:1 1 auto; text-align:center; }
+
+  .grid4 { grid-template-columns:repeat(2,1fr); }
+  .grid2 { grid-template-columns:1fr; }
+  .stat { font-size:20px; }
+  .kpi { padding:12px 14px; }
+
+  /* two product tiles fit across a phone once the tile is allowed to shrink */
+  .cardgrid { grid-template-columns:repeat(auto-fill,minmax(148px,1fr)); gap:8px; }
+  .svc { padding:11px; gap:5px; }
+  .svcn { font-size:15px; line-height:18px; }
+  .svcp { font-size:14px; }
+  .prodimg { height:74px; }
+  .panel { padding:14px; }
+
+  /* tables keep their column widths and scroll instead of crushing */
+  .tbl { min-width:560px; }
+  .a4 { padding:18px; }
+  .a4 .a4t { font-size:28px; }
+  .a4 .a4h { flex-direction:column; gap:12px; }
+  .a4 .a4t, .a4 .a4nr, .a4 .a4meta { text-align:left; }
+
+  .formrow { grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); }
+  .dline { grid-template-columns:minmax(0,1fr) 52px 74px 24px; }
+
+  /* leave room for the fixed bar */
+  .app { padding-bottom:76px; }
+  .paybarfix {
+    display:flex; position:fixed; left:0; right:0; bottom:0; z-index:15;
+    align-items:center; gap:10px; padding:10px 12px;
+    background:var(--navbg); border-top:1px solid var(--line);
+  }
+  .paybarfix .sum { font-family:"IBM Plex Mono",monospace; font-variant-numeric:tabular-nums;
+                    color:#EDEFF0; font-size:17px; font-weight:500; white-space:nowrap; }
+  .paybarfix .cnt { font:400 11px "IBM Plex Mono",monospace; letter-spacing:.08em;
+                    text-transform:uppercase; color:#7C8996; display:block; }
+  .paybarfix .btnp { flex:0 1 auto; margin-left:auto; background:var(--acc); color:#0A0E12; }
+  .paybarfix .btnp:disabled { background:#26313C; color:#7C8996; }
 }
 
 @media print {

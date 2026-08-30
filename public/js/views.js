@@ -4,7 +4,7 @@
 
 import { h, panel, eur, num, signed, dateET, dayMonth, todayISO, monthLabel, parseNum } from "./util.js";
 import {
-  S, draftVat, paymentMismatch, draftTotal,
+  S, draftVat, paymentMismatch, draftTotal, METHOD_LABEL,
   ledgerWithBalance, ledgerTotals, dayFigures, stockValue, lowStock, stockStatus,
 } from "./state.js";
 
@@ -29,11 +29,15 @@ function kpi(label, value, opts = {}) {
 
 function table(cols, headers, rows, emptyText) {
   const grid = "grid-template-columns:" + cols;
-  return h("div", { class: "tbl" },
-    h("div", { class: "hrow", style: grid },
-      ...headers.map((t) => h("span", { class: "thr" + (t.r ? " r" : ""), text: t.label || t }))
-    ),
-    rows.length ? rows : h("p", { class: "empty", text: emptyText })
+  // The scroller keeps a wide table inside itself instead of pushing the
+  // whole page sideways on a phone.
+  return h("div", { class: "tblwrap" },
+    h("div", { class: "tbl" },
+      h("div", { class: "hrow", style: grid },
+        ...headers.map((t) => h("span", { class: "thr" + (t.r ? " r" : ""), text: t.label || t }))
+      ),
+      rows.length ? rows : h("p", { class: "empty", text: emptyText })
+    )
   );
 }
 
@@ -260,6 +264,19 @@ export function viewPos(actions) {
           onclick: actions.finishSale,
         }, "Lõpeta müük")
       )
+    ),
+
+    h("div", { class: "paybarfix noprint" },
+      h("div", {},
+        h("span", { id: "barCount", class: "cnt",
+                    text: S.draft.lines.length + " rida · " + METHOD_LABEL[S.draft.method] }),
+        h("span", { id: "barTotal", class: "sum", text: eur(total) })
+      ),
+      h("button", {
+        id: "barFinish", class: "btnp", type: "button",
+        disabled: !S.draft.lines.length || mismatch !== 0,
+        onclick: actions.finishSale,
+      }, "Lõpeta")
     ),
   ];
 }
