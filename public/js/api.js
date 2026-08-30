@@ -90,6 +90,8 @@ export const api = {
   // a sale writes the invoice, the cash-book entry and the stock movements
   // together; the response carries the refreshed state so nothing goes stale
   createSale: (sale) => post("/api/sales", sale),
+  // voids an invoice: number kept, cash-book entry and stock movements undone
+  cancelInvoice: (id, reason) => post("/api/invoices/" + id + "/cancel", { reason }),
 
   // kassaraamat
   addLedger: (entry) => post("/api/ledger", entry),

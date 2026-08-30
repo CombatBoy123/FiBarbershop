@@ -106,6 +106,8 @@ const ready = pool.query(`
     cash          NUMERIC NOT NULL DEFAULT 0,
     card          NUMERIC NOT NULL DEFAULT 0,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    cancelled_at  TIMESTAMPTZ,
+    cancel_reason TEXT NOT NULL DEFAULT '',
     UNIQUE(user_id, nr)
   );
   CREATE INDEX IF NOT EXISTS idx_invoices_user_date ON invoices(user_id, invoice_date DESC);
@@ -150,6 +152,8 @@ const ready = pool.query(`
   CREATE INDEX IF NOT EXISTS idx_moves_user ON stock_movements(user_id, move_date DESC, id DESC);
   ALTER TABLE settings ADD COLUMN IF NOT EXISTS invoice_month TEXT;
   ALTER TABLE products ADD COLUMN IF NOT EXISTS image_url TEXT NOT NULL DEFAULT '';
+  ALTER TABLE invoices ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMPTZ;
+  ALTER TABLE invoices ADD COLUMN IF NOT EXISTS cancel_reason TEXT NOT NULL DEFAULT '';
 `);
 
 // Every amount crossing this app is euros with two decimals. Summing floats

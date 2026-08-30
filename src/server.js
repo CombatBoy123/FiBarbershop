@@ -511,6 +511,42 @@ app.post(
   })
 );
 
+// Cancel an invoice that should never have been issued. The number is kept
+// and the row stays visible as TÜHISTATUD: deleting it would leave a hole in
+// the sequence that cannot be explained to an accountant later.
+//
+// The cash-book entry and the stock movements it created are removed, because
+// no money changed hands and no goods left the shelf. The audit trail for the
+// cancellation itself lives on the invoice.
+app.post(
+  "/api/invoices/:id/cancel",
+  requireAuth,
+  wrap(async (req, res) => {
+    const id = Number(req.params.id);
+    const reason = String(req.body.reason || "").slice(0, 300);
+
+    await withTransaction(async (client) => {
+      const inv = await client.query(
+        "SELECT id, nr, cancelled_at FROM invoices WHERE id = $2 AND user_id = $1 FOR UPDATE",
+        [req.userId, id]
+      );
+      if (!inv.rowCount) throw Object.assign(new Error("Arvet ei leitud."), { status: 404 });
+      if (inv.rows[0].cancelled_at) {
+        throw Object.assign(new Error("See arve on juba tühistatud."), { status: 409 });
+      }
+
+      await client.query("DELETE FROM ledger_entries WHERE user_id = $1 AND invoice_id = $2", [req.userId, id]);
+      await client.query("DELETE FROM stock_movements WHERE user_id = $1 AND invoice_id = $2", [req.userId, id]);
+      await client.query(
+        "UPDATE invoices SET cancelled_at = now(), cancel_reason = $3 WHERE id = $2 AND user_id = $1",
+        [req.userId, id, reason]
+      );
+    });
+
+    res.json({ state: await loadState(req.userId) });
+  })
+);
+
 // ------------------------------------------------------------- kassaraamat
 
 const LEDGER_CATEGORIES = [

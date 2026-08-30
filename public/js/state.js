@@ -156,8 +156,13 @@ export function ledgerTotals() {
 
 // ---------------------------------------------------------------- the day
 
+export const isCancelled = (i) => Boolean(i.cancelled_at);
+
 export function dayFigures(date = todayISO()) {
-  const todays = S.invoices.filter((i) => String(i.invoice_date).slice(0, 10) === date);
+  // A cancelled invoice is still listed, but it is not turnover.
+  const todays = S.invoices.filter(
+    (i) => String(i.invoice_date).slice(0, 10) === date && !isCancelled(i)
+  );
   const r = (n) => Math.round(n * 100) / 100;
   return {
     invoices: todays,

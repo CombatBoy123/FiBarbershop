@@ -5,7 +5,7 @@
 import { h, panel, eur, num, signed, dateET, dayMonth, todayISO, monthLabel, parseNum } from "./util.js";
 import {
   S, draftVat, paymentMismatch, draftTotal, METHOD_LABEL,
-  ledgerWithBalance, ledgerTotals, dayFigures, stockValue, lowStock, stockStatus,
+  ledgerWithBalance, ledgerTotals, dayFigures, stockValue, lowStock, stockStatus, isCancelled,
 } from "./state.js";
 
 // ------------------------------------------------------------- fragments
@@ -299,11 +299,14 @@ export function viewInvoices(actions) {
       onclick: () => actions.openInvoice(i.id),
     },
       h("div", {},
-        h("div", { class: "tr mono", text: i.nr }),
+        h("div", { class: "tr mono" },
+          i.nr,
+          isCancelled(i) ? h("span", { class: "pill neg", style: "margin-left:8px", text: "Tühistatud" }) : null
+        ),
         h("div", { class: "thr", style: "margin-top:3px",
                    text: dateET(i.invoice_date) + " · " + lineSummary(i) })
       ),
-      h("span", { class: "tr mono r", text: eur(i.total) })
+      h("span", { class: "tr mono r" + (isCancelled(i) ? " dim struck" : ""), text: eur(i.total) })
     )
   );
 
@@ -311,6 +314,11 @@ export function viewInvoices(actions) {
     head(S.invoices.length + " arvet", "Arved",
       h("button", { class: "btng", type: "button", disabled: !selected, onclick: () => window.print() },
         "Trüki / PDF"),
+      h("button", {
+        class: "btng", type: "button",
+        disabled: !selected || isCancelled(selected),
+        onclick: () => selected && actions.cancelInvoice(selected),
+      }, selected && isCancelled(selected) ? "Tühistatud" : "Tühista arve"),
       h("button", { class: "btnp", type: "button", onclick: () => actions.goto("pos") }, "+ Uus müük")
     ),
 
@@ -353,6 +361,11 @@ function invoiceSheet(invoice) {
         )
       )
     ),
+
+    isCancelled(invoice)
+      ? h("p", { class: "a4void", text: "Tühistatud " + dateET(invoice.cancelled_at) +
+                 (invoice.cancel_reason ? " · " + invoice.cancel_reason : "") })
+      : null,
 
     h("div", { class: "a4party" }, ...sellerLines.map((l) => h("div", { text: l }))),
     h("hr", { class: "a4rule" }),

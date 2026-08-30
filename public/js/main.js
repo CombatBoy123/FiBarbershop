@@ -187,6 +187,21 @@ const actions = {
     toast("Arve " + result.invoice.nr + " koostatud · kanne kassaraamatus");
   },
 
+  // Voiding keeps the number and undoes the cash-book entry and the stock
+  // movements the sale created.
+  async cancelInvoice(invoice) {
+    const reason = prompt(
+      "Arve " + invoice.nr + " tühistamine.\n\nNumber jääb alles, kassakanne ja laoliikumine keeratakse tagasi.\nPõhjus (vabatahtlik):",
+      ""
+    );
+    if (reason === null) return;
+    const result = await guard(() => api.cancelInvoice(invoice.id, reason));
+    if (!result) return;
+    applyState(result.state);
+    render();
+    toast("Arve " + invoice.nr + " tühistatud · kassa ja ladu taastatud");
+  },
+
   // ---- kassaraamat
   async addLedger(form) {
     const saved = await guard(() =>
