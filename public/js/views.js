@@ -416,7 +416,7 @@ export function viewLedger(actions) {
     h("div", { class: "grid4" },
       kpi("Sularahas", eur(totals.cashIn)),
       kpi("Kaardiga", eur(totals.cardIn)),
-      kpi("Kulud", "−" + eur(totals.out), { cls: "neg" }),
+      kpi("Kulud", (totals.out > 0 ? "−" : "") + eur(totals.out), { cls: totals.out > 0 ? "neg" : "" }),
       kpi("Jääk", eur(totals.balance), { inverse: true })
     ),
 
