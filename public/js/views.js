@@ -3,6 +3,9 @@
 // main.js passes in; they never talk to the server themselves.
 
 import { h, panel, eur, num, signed, dateET, dayMonth, todayISO, monthLabel, parseNum } from "./util.js";
+
+// Mirrors the list the server offers; either side may be extended freely.
+const LEDGER_CATEGORIES = ["Teenuste müük", "Kaubamüük", "Kaubavaru", "Rent", "Töövahendid", "Palk"];
 import {
   S, draftVat, paymentMismatch, draftTotal, METHOD_LABEL,
   ledgerWithBalance, ledgerTotals, dayFigures, stockValue, lowStock, stockStatus, isCancelled,
@@ -423,8 +426,19 @@ export function viewLedger(actions) {
   const grid = "70px 66px 1.1fr 1.6fr 90px 90px 100px 100px 30px";
 
   const form = {
-    date: todayISO(), kind: "kulu", category: "Muu", description: "", cash: "", card: "",
+    date: todayISO(), kind: "kulu", category: "Muu", custom: "", description: "", cash: "", card: "",
   };
+
+  // Categories already used in the book join the list, so a name typed once
+  // does not have to be retyped every month.
+  const used = [...new Set(S.ledger.map((e) => e.category).filter(Boolean))];
+  const options = [...new Set([...LEDGER_CATEGORIES, ...used])].filter((c) => c !== "Muu");
+  options.push("Muu");
+
+  const customField = field("Täpsusta kategooria",
+    inp({ type: "text", placeholder: "Nt. koolitus, parkimine",
+          oninput: (e) => (form.custom = e.target.value) }));
+  customField.hidden = form.category !== "Muu";
 
   const body = rows.map((e) =>
     h("div", { class: "row", style: "grid-template-columns:" + grid },
@@ -461,8 +475,14 @@ export function viewLedger(actions) {
         field("Kuupäev", inp({ type: "date", value: form.date, oninput: (e) => (form.date = e.target.value) })),
         field("Tüüp", select({ oninput: (e) => (form.kind = e.target.value) },
           [{ value: "tulu", label: "Tulu" }, { value: "kulu", label: "Kulu" }], form.kind)),
-        field("Kategooria", select({ oninput: (e) => (form.category = e.target.value) },
-          ["Teenuste müük", "Kaubamüük", "Kaubavaru", "Rent", "Töövahendid", "Palk", "Muu"], form.category)),
+        field("Kategooria", select({
+          oninput: (e) => {
+            form.category = e.target.value;
+            customField.hidden = form.category !== "Muu";
+            if (customField.hidden) form.custom = "";
+          },
+        }, options, form.category)),
+        customField,
         field("Kirjeldus", inp({ type: "text", placeholder: "Nt. salongi üür",
           oninput: (e) => (form.description = e.target.value) })),
         field("Sularaha", inp({ type: "number", min: "0", step: "0.01", placeholder: "0,00",

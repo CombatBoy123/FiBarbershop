@@ -208,7 +208,10 @@ const actions = {
       api.addLedger({
         date: form.date,
         kind: form.kind,
-        category: form.category,
+        category:
+          form.category === "Muu" && String(form.custom || "").trim()
+            ? String(form.custom).trim()
+            : form.category,
         description: form.description,
         cash: parseNum(form.cash),
         card: parseNum(form.card),

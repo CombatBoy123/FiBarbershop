@@ -549,6 +549,7 @@ app.post(
 
 // ------------------------------------------------------------- kassaraamat
 
+// Offered in the dropdown; the operator may also type their own.
 const LEDGER_CATEGORIES = [
   "Teenuste müük", "Kaubamüük", "Kaubavaru", "Rent", "Töövahendid", "Palk", "Muu",
 ];
@@ -559,7 +560,10 @@ app.post(
   wrap(async (req, res) => {
     const date = isDate(req.body.date) ? req.body.date : today();
     const kind = req.body.kind === "tulu" ? "tulu" : "kulu";
-    const category = LEDGER_CATEGORIES.includes(req.body.category) ? req.body.category : "Muu";
+    // The list is what the dropdown offers, not a whitelist: picking "Muu"
+    // lets the operator name the category themselves, and that name has to
+    // survive to the cash book or the entry says nothing.
+    const category = String(req.body.category || "").replace(/\s+/g, " ").trim().slice(0, 60) || "Muu";
     const cash = Math.max(0, num(req.body.cash));
     const card = Math.max(0, num(req.body.card));
     if (cents(cash) + cents(card) === 0) {
