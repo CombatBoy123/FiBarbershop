@@ -37,6 +37,13 @@ body { margin: 0; background: #E1E5E8; }
   --btnbg:#0FA3C4; --btnfg:#0A0E12; --tint:#0E2C36;
 }
 
+/* Double tap on a control zoomed the page instead of acting. This turns that
+   gesture off for controls only — pinch zoom still works, so nothing is lost
+   for anyone who needs to magnify the page. */
+button, input, select, textarea, label, a, .navtab, .svc, .row.click {
+  touch-action: manipulation;
+}
+
 a { color: var(--accd); }
 a:hover { color: var(--acc); }
 
@@ -249,15 +256,15 @@ a:hover { color: var(--acc); }
 
 @media (max-width:760px) {
   .wrap { padding:12px; gap:14px; }
-  .nav { padding:8px 10px; gap:8px; }
-  .navleft { gap:10px; flex:1 1 auto; min-width:0; }
-  .navright { gap:8px; }
-  .brandlogo { height:30px; }
+  .nav { padding:11px 12px; gap:10px; }
+  .navleft { gap:12px; flex:1 1 auto; min-width:0; }
+  .navright { gap:10px; }
+  .brandlogo { height:36px; }
   .navdate { display:none; }
   .navtabs { gap:0; -webkit-overflow-scrolling:touch; scrollbar-width:none; }
   .navtabs::-webkit-scrollbar { display:none; }
-  .navtab { padding:6px 10px; font-size:12.5px; }
-  .tgl button { padding:4px 7px; font-size:10px; }
+  .navtab { padding:10px 13px; font-size:14px; }
+  .tgl button { padding:7px 9px; font-size:11px; }
 
   .h1 { font-size:24px; line-height:26px; }
   .head { gap:12px; }
@@ -277,9 +284,16 @@ a:hover { color: var(--acc); }
   .prodimg { height:74px; }
   .panel { padding:14px; }
 
-  /* tables keep their column widths and scroll instead of crushing */
-  .tbl { min-width:560px; }
-  .a4 { padding:18px; }
+  /* No blanket min-width: it forced even a two-column list to scroll
+     sideways. Wide tables overflow their scroller on their own, because
+     their fixed px columns already exceed a phone. */
+  .a4 { padding:16px; }
+  /* Fixed columns (60+60+90+90) do not fit 375px. Ühik is dropped — every
+     line on a barbershop invoice is tk — and the rest are tightened. */
+  .a4 .hrow, .a4 .row { grid-template-columns:minmax(0,1fr) 38px 58px 62px; gap:6px; }
+  .a4 .hrow > *:nth-child(3), .a4 .row > *:nth-child(3) { display:none; }
+  .a4 .tr, .a4 .thr { font-size:12px; }
+  .a4 .a4tot { width:100%; }
   .a4 .a4t { font-size:28px; }
   .a4 .a4h { flex-direction:column; gap:12px; }
   .a4 .a4t, .a4 .a4nr, .a4 .a4meta { text-align:left; }
