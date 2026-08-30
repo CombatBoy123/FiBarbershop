@@ -464,7 +464,10 @@ export function viewStock(actions) {
         p.image_url ? h("img", { class: "thumb", src: p.image_url, alt: "", loading: "lazy" }) : null,
         h("span", { text: p.name })
       ),
-      h("span", { class: "tr mono r " + (st.cls === "pos" ? "" : st.cls), text: String(Number(p.stock)) }),
+      inp({ class: "inp stockinp " + (st.cls === "pos" ? "" : st.cls),
+            type: "number", min: "0", step: "1", value: String(Number(p.stock)),
+            "aria-label": "Jääk: " + p.name,
+            onchange: (e) => actions.setStock(p.id, p.name, parseNum(e.target.value)) }),
       h("span", { class: "tr mono r", text: num(Number(p.stock) * Number(p.cost)) }),
       h("span", { class: "pill r " + st.cls, text: st.label })
     );
@@ -514,7 +517,8 @@ export function viewStock(actions) {
       h("div", {},
         h("p", { class: "thr", text: "Jääk tootepõhiselt", style: "margin:0 0 10px" }),
         table("1fr 70px 100px 110px",
-          ["Toode", { label: "Jääk", r: true }, { label: "Väärtus", r: true }, { label: "Staatus", r: true }],
+          ["Toode", { label: "Jääk · muudetav", r: true }, { label: "Väärtus", r: true },
+           { label: "Staatus", r: true }],
           stockRows, "Tooteid pole.")
       ),
       h("div", {},

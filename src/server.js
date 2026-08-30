@@ -306,6 +306,46 @@ app.put(
   })
 );
 
+// Set the stock of one product outright (a stocktake). Stock is derived from
+// movements, never stored, so this does not overwrite a number — it books the
+// difference as one correcting movement and leaves the history intact.
+app.put(
+  "/api/products/:id/stock",
+  requireAuth,
+  wrap(async (req, res) => {
+    const productId = Number(req.params.id);
+    const target = num(req.body.qty, -1);
+    if (!(target >= 0)) return res.status(400).json({ error: "Kogus ei saa olla negatiivne." });
+    const date = isDate(req.body.date) ? req.body.date : today();
+
+    const delta = await withTransaction(async (client) => {
+      // Locking the product serialises two tills correcting the same item.
+      const p = await client.query(
+        "SELECT id, cost FROM products WHERE id = $2 AND user_id = $1 FOR UPDATE",
+        [req.userId, productId]
+      );
+      if (!p.rowCount) throw Object.assign(new Error("Toodet ei leitud."), { status: 404 });
+
+      const cur = await client.query(
+        `SELECT COALESCE(SUM(CASE WHEN move_type = 'in' THEN qty ELSE -qty END), 0) AS qty
+           FROM stock_movements WHERE user_id = $1 AND product_id = $2`,
+        [req.userId, productId]
+      );
+      const diff = target - Number(cur.rows[0].qty);
+      if (diff === 0) return 0;
+
+      await client.query(
+        `INSERT INTO stock_movements (user_id, product_id, move_date, move_type, qty, price)
+         VALUES ($1,$2,$3,$4,$5,$6)`,
+        [req.userId, productId, date, diff > 0 ? "in" : "out", Math.abs(diff), Number(p.rows[0].cost) || 0]
+      );
+      return diff;
+    });
+
+    res.json({ delta, state: await loadState(req.userId) });
+  })
+);
+
 app.delete(
   "/api/products/:id",
   requireAuth,

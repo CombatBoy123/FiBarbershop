@@ -84,6 +84,8 @@ export const api = {
   addProduct: (p) => post("/api/products", p),
   updateProduct: (id, patch) => put("/api/products/" + id, patch),
   removeProduct: (id) => del("/api/products/" + id),
+  // set stock outright; the server books the difference as a movement
+  setStock: (id, qty) => put("/api/products/" + id + "/stock", { qty }),
 
   // a sale writes the invoice, the cash-book entry and the stock movements
   // together; the response carries the refreshed state so nothing goes stale

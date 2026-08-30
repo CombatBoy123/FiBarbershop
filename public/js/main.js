@@ -236,6 +236,21 @@ const actions = {
     toast("Liikumine lisatud.");
   },
 
+  // Typing a new stock figure books the difference as a movement, so the
+  // shelf and the history never disagree.
+  async setStock(id, name, qty) {
+    const result = await guard(() => api.setStock(id, qty));
+    if (!result) {
+      render();
+      return;
+    }
+    applyState(result.state);
+    render();
+    if (result.delta === 0) toast(name + " — jääk oli juba " + qty + " tk.");
+    else if (result.delta > 0) toast(name + " — lisatud " + result.delta + " tk, jääk " + qty + " tk.");
+    else toast(name + " — maha kantud " + Math.abs(result.delta) + " tk, jääk " + qty + " tk.");
+  },
+
   async deleteMovement(id) {
     if (!confirm("Kustutada see laoliikumine?")) return;
     const done = await guard(() => api.removeMovement(id));
