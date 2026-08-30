@@ -59,6 +59,42 @@ async function downloadImage(src, name) {
   return IMG_REL + file;
 }
 
+
+// The shop front prints the figure two ways depending on how low it is:
+// "Madal laoseis: 5 alles" or "12 laos". Sold-out products print neither, so
+// availability from the JSON feed decides those. Returns null when the page
+// says nothing useful, and the till keeps whatever it already had.
+async function shopStock(handle, available) {
+  try {
+    const res = await fetch(SHOP + "/products/" + handle);
+    if (!res.ok) return null;
+    const html = await res.text();
+    const m = html.match(/Madal laoseis:\s*(\d+)\s*alles/) || html.match(/(\d+)\s*laos\b/);
+    if (m) return Number(m[1]);
+    return available ? null : 0;
+  } catch (e) {
+    return null;
+  }
+}
+
+// Booking the difference rather than writing a number keeps the movement
+// history and the stock figure in agreement.
+async function alignStock(userId, productId, target, cost) {
+  const cur = await query(
+    `SELECT COALESCE(SUM(CASE WHEN move_type = 'in' THEN qty ELSE -qty END), 0) AS qty
+       FROM stock_movements WHERE user_id = $1 AND product_id = $2`,
+    [userId, productId]
+  );
+  const diff = target - Number(cur.rows[0].qty);
+  if (diff === 0) return 0;
+  await query(
+    `INSERT INTO stock_movements (user_id, product_id, move_date, move_type, qty, price)
+     VALUES ($1,$2,CURRENT_DATE,$3,$4,$5)`,
+    [userId, productId, diff > 0 ? "in" : "out", Math.abs(diff), cost || 0]
+  );
+  return diff;
+}
+
 async function main() {
   const email = String(process.env.SYNC_EMAIL || "").trim().toLowerCase();
   if (!email) throw new Error("Set SYNC_EMAIL to the account whose product list should be synced.");
@@ -77,6 +113,8 @@ async function main() {
       name: String(p.title || "").replace(/\s+/g, " ").trim(),
       price: Number((p.variants && p.variants[0] && p.variants[0].price) || 0),
       src: (p.images && p.images[0] && p.images[0].src) || "",
+      handle: p.handle,
+      available: !!(p.variants && p.variants[0] && p.variants[0].available),
     }))
     .filter((p) => p.name);
 
@@ -113,6 +151,29 @@ async function main() {
     }
   }
 
+  // Optional second pass: mirror the stock figures the shop front prints.
+  // Off by default — once the till has sales of its own, the shop and the
+  // shelf are separate inventories and overwriting one with the other loses
+  // real movements.
+  let synced = 0;
+  let unknown = 0;
+  if (process.env.SYNC_STOCK === "1") {
+    for (const p of incoming) {
+      const row = await query(
+        "SELECT id, cost FROM products WHERE user_id = $1 AND name = $2",
+        [userId, p.name]
+      );
+      if (!row.rowCount) continue;
+      const target = await shopStock(p.handle, p.available);
+      if (target === null) {
+        unknown++;
+        continue;
+      }
+      await alignStock(userId, row.rows[0].id, target, Number(row.rows[0].cost));
+      synced++;
+    }
+  }
+
   // Anything no longer sold is hidden rather than deleted, so old invoices and
   // stock movements keep pointing at a real row.
   const names = incoming.map((p) => p.name);
@@ -123,6 +184,9 @@ async function main() {
 
   console.log("Poes: " + incoming.length + " toodet | pilte laaditud: " + images);
   console.log("Lisatud: " + added + " | uuendatud: " + updated + " | peidetud: " + gone.rowCount);
+  if (process.env.SYNC_STOCK === "1") {
+    console.log("Laoseis poest: " + synced + " toodet" + (unknown ? " | " + unknown + " jäi teadmata" : ""));
+  }
   if (gone.rowCount) console.log("Peidetud: " + gone.rows.map((r) => r.name).join(", "));
 
   const zero = await query(
