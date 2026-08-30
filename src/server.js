@@ -368,14 +368,15 @@ app.post(
       const settings = s.rows[0];
       if (!settings) throw Object.assign(new Error("Seaded puuduvad."), { status: 400 });
 
-      const year = Number(date.slice(0, 4));
-      const seq = settings.invoice_year === year ? settings.invoice_seq + 1 : 1;
-      await client.query("UPDATE settings SET invoice_year = $2, invoice_seq = $3 WHERE user_id = $1", [
-        req.userId,
-        year,
-        seq,
-      ]);
-      const nr = year + "-" + String(seq).padStart(3, "0");
+      // Numbering restarts every day: the date is already in the number, so
+      // the counter only has to be unique within that day.
+      const seq = String(settings.invoice_day || "") === date ? settings.invoice_seq + 1 : 1;
+      await client.query(
+        "UPDATE settings SET invoice_day = $2, invoice_seq = $3, invoice_year = $4 WHERE user_id = $1",
+        [req.userId, date, seq, Number(date.slice(0, 4))]
+      );
+      const [yyyy, mm, dd] = date.split("-");
+      const nr = dd + "/" + mm + "/" + yyyy.slice(2) + " - " + String(seq).padStart(3, "0");
 
       // Stock is checked inside the transaction so two tills selling the last
       // jar at once cannot both succeed.

@@ -120,12 +120,14 @@ const lineSummary = (invoice) =>
 
 // The server allocates the real number when the sale is finished; this is the
 // number it will almost certainly get, shown so the operator can quote it.
+// Format is pp/kk/aa - xxx and the counter restarts each day.
 function expectedNr() {
-  const year = new Date().getFullYear();
+  const [yyyy, mm, dd] = todayISO().split("-");
+  const prefix = dd + "/" + mm + "/" + yyyy.slice(2);
   const seqs = S.invoices
-    .filter((i) => String(i.nr).startsWith(year + "-"))
+    .filter((i) => String(i.nr).startsWith(prefix))
     .map((i) => Number(String(i.nr).split("-")[1]) || 0);
-  return year + "-" + String((seqs.length ? Math.max(...seqs) : 0) + 1).padStart(3, "0");
+  return prefix + " - " + String((seqs.length ? Math.max(...seqs) : 0) + 1).padStart(3, "0");
 }
 
 export function viewPos(actions) {
@@ -327,7 +329,7 @@ function invoiceSheet(invoice) {
         h("div", { class: "a4meta" },
           h("div", { text: "Kuupäev " + dateET(invoice.invoice_date) }),
           h("div", { text: "Tähtaeg " + dateET(invoice.due_date) }),
-          h("div", { text: "Viitenumber " + String(invoice.nr).replace("-", "") })
+          h("div", { text: "Viitenumber " + String(invoice.nr).replace(/\D/g, "") })
         )
       )
     ),

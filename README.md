@@ -78,7 +78,8 @@ muidu nupp ei aktiveeru.
 
 „Lõpeta müük" teeb **ühe** serveripoolse tehinguga kolm asja:
 
-1. koostab arve järgmise numbriga (`2026-001`, `2026-002`, …),
+1. koostab arve järgmise numbriga kujul `pp/kk/aa - xxx` (`30/08/26 - 001`,
+   `30/08/26 - 002`, …) — loendur algab igal päeval uuesti 001-st,
 2. kirjutab kassaraamatusse tulukande,
 3. kannab müüdud tooted laost välja.
 

@@ -55,6 +55,7 @@ const ready = pool.query(`
     opening_balance  NUMERIC NOT NULL DEFAULT 0,
     invoice_year     INTEGER NOT NULL DEFAULT 0,
     invoice_seq      INTEGER NOT NULL DEFAULT 0,
+    invoice_day      DATE,
     company_name     TEXT NOT NULL DEFAULT 'Fi Barbershop OÜ',
     company_address  TEXT NOT NULL DEFAULT 'Tartu',
     company_reg      TEXT NOT NULL DEFAULT '',
@@ -146,6 +147,7 @@ const ready = pool.query(`
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
   );
   CREATE INDEX IF NOT EXISTS idx_moves_user ON stock_movements(user_id, move_date DESC, id DESC);
+  ALTER TABLE settings ADD COLUMN IF NOT EXISTS invoice_day DATE;
 `);
 
 // Every amount crossing this app is euros with two decimals. Summing floats
