@@ -302,10 +302,42 @@ a:hover { color: var(--acc); }
   .paybarfix .btnp:disabled { background:#26313C; color:#7C8996; }
 }
 
+/* Print: the sheet alone, filling a real A4 page.
+   Sizes switch to points here — px is a screen unit and leaves the document
+   marooned in the top third of the paper. */
 @media print {
-  .nav, .noprint { display:none !important; }
-  .wrap { padding:0; }
-  .cols.cinv { display:block; }
-  .a4 { border:0; padding:0; }
-  .a4 .a4g { -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+  @page { size: A4; margin: 14mm; }
+
+  html, body { background:#fff; }
+  .nav, .noprint, .head, .invoicelist, .toast, .paybarfix, .mk { display:none !important; }
+  .wrap { padding:0; gap:0; }
+  .app { padding-bottom:0; }
+  .cols, .cols.cinv, .cols.c2, .cols.c2e { display:block; }
+
+  /* the sheet is the page */
+  .a4 {
+    border:0; padding:0; width:100%; min-height:262mm;
+    display:flex; flex-direction:column; background:#fff;
+  }
+  .a4logo { height:20mm; width:auto; }
+  .a4 .a4t { font-size:32pt; }
+  .a4 .a4nr { font-size:13pt; margin:2mm 0 4mm; }
+  .a4 .a4meta { font-size:9pt; line-height:1.6; }
+  .a4 .a4party { font-size:9pt; line-height:1.55; }
+  .a4 .a4pn { font-size:12pt; }
+  .a4 .thr { font-size:7.5pt; }
+  .a4 .tr { font-size:10pt; }
+  .a4 .row, .a4 .hrow { padding:2.6mm 0; }
+  .a4 .a4tot { font-size:10.5pt; width:70mm; }
+  .a4 .a4g { padding:3mm 4mm; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+  .a4 .a4g span:first-child { font-size:12pt; }
+  .a4 .a4g span:last-child { font-size:14pt; }
+  .a4 .a4void { font-size:9pt; padding:2mm 3mm; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+
+  /* payment terms sit at the foot of the page, not under the last line */
+  .a4 .a4foot { margin-top:auto; padding-top:8mm; font-size:9pt; }
+
+  /* a long bill must not split a row across two pages */
+  .a4 .row { break-inside:avoid; }
+  .a4 .a4tot, .a4 .a4foot { break-inside:avoid; }
 }
