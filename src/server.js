@@ -666,6 +666,13 @@ app.use(express.static(path.join(__dirname, "..", "public")));
 
 app.use("/api", (req, res) => res.status(404).json({ error: "Tundmatu API otspunkt." }));
 
+// The till lives under /app; everything else is the public shop front.
+// Both are plain files, so express.static already serves their assets — these
+// two routes only decide which document a bare path gets.
+app.get(["/app", "/app/*"], (req, res) => {
+  res.sendFile(path.join(__dirname, "..", "public", "app.html"));
+});
+
 app.get("*", (req, res) => {
   res.sendFile(path.join(__dirname, "..", "public", "index.html"));
 });
