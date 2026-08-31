@@ -180,7 +180,7 @@ a.navtab { text-decoration:none; }
 .kpi { background:var(--panel); padding:16px 18px; }
 .kpi.inv { background:var(--btnbg); }
 .kpi.inv .thr { color:#7C8996; }
-.kpi.inv .stat { color:var(--acc); }
+.kpi.inv .stat { color:#000000; }
 .stat { font-family:"IBM Plex Mono", monospace; font-variant-numeric:tabular-nums;
         font-weight:500; font-size:26px; margin-top:7px; }
 .grid4 { display:grid; grid-template-columns:repeat(4,1fr); gap:1px; background:var(--line);
