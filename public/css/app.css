@@ -65,6 +65,13 @@ a:hover { color: var(--acc); }
 .navtab:hover { color:#EDEFF0; }
 .navtab.on { font-weight:600; color:#0A0E12; background:var(--acc); }
 .navtab:focus-visible { outline:2px solid var(--acc); outline-offset:2px; }
+a.navtab { text-decoration:none; }
+
+/* Logo and "Koduleht" both leave the app for the public site. The phone nav
+   has no room for the text button, so there the logo carries it alone. */
+.navhome { display:block; flex:none; }
+.navhome:hover { opacity:.82; }
+.navhome:focus-visible { outline:2px solid var(--acc); outline-offset:3px; }
 .navdate { font:400 12px "IBM Plex Mono", monospace; letter-spacing:.08em; color:var(--navtx); white-space:nowrap; }
 
 .tgl { display:flex; border:1px solid #26313C; }
@@ -232,6 +239,8 @@ a:hover { color: var(--acc); }
 .loginsub { font:400 15px/1.6 "IBM Plex Sans",sans-serif; color:#A8B2BC; max-width:34ch; }
 .loginfoot { font:400 11px "IBM Plex Mono",monospace; letter-spacing:.14em;
              text-transform:uppercase; color:#55626F; }
+.loginfoot a { color:inherit; text-decoration:underline; text-underline-offset:3px; }
+.loginfoot a:hover { color:var(--acc); }
 .loginmain { background:var(--surf); padding:48px; display:flex; align-items:center; }
 .loginform { width:min(400px,100%); display:flex; flex-direction:column; gap:14px; }
 
@@ -261,6 +270,7 @@ a:hover { color: var(--acc); }
   .navright { gap:10px; }
   .brandlogo { height:36px; }
   .navdate { display:none; }
+  .navtab.navhometab { display:none; }
   .navtabs { gap:0; -webkit-overflow-scrolling:touch; scrollbar-width:none; }
   .navtabs::-webkit-scrollbar { display:none; }
   .navtab { padding:10px 13px; font-size:14px; }

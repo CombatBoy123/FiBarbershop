@@ -24,7 +24,7 @@
         Andmed on serveris — sama seis igas seadmes.
       </p>
     </div>
-    <p class="loginfoot">Tartu · fibarbers.ee</p>
+    <p class="loginfoot">Tartu · <a href="/">fibarbers.ee</a></p>
   </div>
 
   <div class="loginmain">
@@ -58,7 +58,9 @@
 <div class="app" id="app" hidden>
   <nav class="nav noprint">
     <div class="navleft">
-      <img class="brandlogo" src="assets/fi-logo.webp" alt="Fi Barbershop">
+      <a class="navhome" href="/" title="Tagasi kodulehele">
+        <img class="brandlogo" src="assets/fi-logo.webp" alt="Fi Barbershop">
+      </a>
       <div class="navtabs" id="navtabs" role="tablist">
         <button class="navtab" type="button" data-tab="dash">Töölaud</button>
         <button class="navtab" type="button" data-tab="pos">Kiirmüük</button>
@@ -70,6 +72,7 @@
     </div>
 
     <div class="navright">
+      <a class="navtab navhometab" href="/">Koduleht</a>
       <span class="navdate" id="navDate"></span>
       <div class="tgl" role="group" aria-label="Teema">
         <button type="button" data-theme="light" class="on">Hele</button>
