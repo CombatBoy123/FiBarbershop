@@ -188,7 +188,7 @@ app.get(
 const SETTING_FIELDS = [
   "vat_rate", "show_vat", "ask_tip", "low_stock", "opening_balance", "payment_days",
   "company_name", "company_address", "company_reg", "company_kmkr",
-  "company_bank", "company_iban", "company_email", "company_web",
+  "company_bank", "company_iban", "company_phone", "company_email", "company_web",
 ];
 
 app.put(

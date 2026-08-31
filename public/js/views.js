@@ -345,7 +345,7 @@ function invoiceSheet(invoice) {
     [st.company_reg && "Reg. " + st.company_reg, st.company_kmkr && "KMKR " + st.company_kmkr]
       .filter(Boolean).join(" · "),
     [st.company_bank, st.company_iban].filter(Boolean).join(" · "),
-    [st.company_email, st.company_web].filter(Boolean).join(" · "),
+    [st.company_phone, st.company_email, st.company_web].filter(Boolean).join(" · "),
   ].filter((l) => l && l.trim());
 
   return h("article", { class: "a4" },
@@ -668,6 +668,7 @@ export function viewPrices(actions) {
             setting("KMKR number", "company_kmkr"),
             setting("Pank", "company_bank"),
             setting("IBAN", "company_iban"),
+            setting("Telefon", "company_phone"),
             setting("E-post", "company_email"),
             setting("Koduleht", "company_web"),
             setting("Kassa algsaldo", "opening_balance", { type: "number", step: "0.01" })

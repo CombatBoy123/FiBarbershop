@@ -56,13 +56,14 @@ const ready = pool.query(`
     invoice_year     INTEGER NOT NULL DEFAULT 0,
     invoice_seq      INTEGER NOT NULL DEFAULT 0,
     invoice_month    TEXT,
-    company_name     TEXT NOT NULL DEFAULT 'Fi Barbershop OÜ',
-    company_address  TEXT NOT NULL DEFAULT 'Tartu',
+    company_name     TEXT NOT NULL DEFAULT 'FI BARBERS OÜ',
+    company_address  TEXT NOT NULL DEFAULT 'Aardla 130, 50415, Tartu, Tartumaa, Eesti',
     company_reg      TEXT NOT NULL DEFAULT '',
     company_kmkr     TEXT NOT NULL DEFAULT '',
     company_bank     TEXT NOT NULL DEFAULT '',
     company_iban     TEXT NOT NULL DEFAULT '',
-    company_email    TEXT NOT NULL DEFAULT 'info@fibarbers.ee',
+    company_phone    TEXT NOT NULL DEFAULT '+37259123312',
+    company_email    TEXT NOT NULL DEFAULT 'fijuuksur@gmail.com',
     company_web      TEXT NOT NULL DEFAULT 'fibarbers.ee',
     payment_days     INTEGER NOT NULL DEFAULT 14
   );
@@ -154,6 +155,19 @@ const ready = pool.query(`
   ALTER TABLE products ADD COLUMN IF NOT EXISTS image_url TEXT NOT NULL DEFAULT '';
   ALTER TABLE invoices ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMPTZ;
   ALTER TABLE invoices ADD COLUMN IF NOT EXISTS cancel_reason TEXT NOT NULL DEFAULT '';
+  ALTER TABLE settings ADD COLUMN IF NOT EXISTS company_phone TEXT NOT NULL DEFAULT '';
+
+  -- The seller block of the invoice was seeded with placeholders before the
+  -- shop's real details were known. Only rows still carrying those exact
+  -- placeholders are corrected; anything the shop has typed itself is left be.
+  UPDATE settings SET company_name    = 'FI BARBERS OÜ'
+    WHERE company_name IN ('', 'Fi Barbershop OÜ');
+  UPDATE settings SET company_address = 'Aardla 130, 50415, Tartu, Tartumaa, Eesti'
+    WHERE company_address IN ('', 'Tartu');
+  UPDATE settings SET company_phone   = '+37259123312'
+    WHERE company_phone = '';
+  UPDATE settings SET company_email   = 'fijuuksur@gmail.com'
+    WHERE company_email IN ('', 'info@fibarbers.ee');
 `);
 
 // Every amount crossing this app is euros with two decimals. Summing floats
