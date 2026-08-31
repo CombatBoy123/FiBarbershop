@@ -666,15 +666,28 @@ app.use(express.static(path.join(__dirname, "..", "public")));
 
 app.use("/api", (req, res) => res.status(404).json({ error: "Tundmatu API otspunkt." }));
 
-// The till lives under /app; everything else is the public shop front.
-// Both are plain files, so express.static already serves their assets — these
-// two routes only decide which document a bare path gets.
+// The public site is a saved copy of fibarbers.ee living in public/site.
+// Its pages carry <base href="/site/"> so their relative assets resolve no
+// matter which URL served them, and its internal links are root-absolute —
+// so the original paths are mapped here rather than rewritten in the HTML.
+const SITE = path.join(__dirname, "..", "public", "site");
+const sitePage = (file) => (req, res) => res.sendFile(path.join(SITE, file));
+
+app.get("/", sitePage("home.html"));
+app.get("/pages/broneeri-aeg", sitePage("broneeri.html"));
+app.get("/collections/all", sitePage("tooted.html"));
+app.get("/pages/contact", sitePage("kontakt.html"));
+
+// The till.
 app.get(["/app", "/app/*"], (req, res) => {
   res.sendFile(path.join(__dirname, "..", "public", "app.html"));
 });
 
+// Anything else on the shop front — a product page, a policy, the English
+// version — was not part of the saved copy, so send it to the live site
+// rather than showing a page that half works.
 app.get("*", (req, res) => {
-  res.sendFile(path.join(__dirname, "..", "public", "index.html"));
+  res.redirect(302, "https://fibarbers.ee" + req.originalUrl);
 });
 
 // Errors thrown inside a route land here. `status` is set deliberately by the
