@@ -32,9 +32,12 @@ body { margin: 0; background: #E1E5E8; }
 .app.dark {
   --bg:#06090C; --surf:#0A0E12; --panel:#12181F; --card:#12181F;
   --line:#26313C; --line2:#1B232C;
-  --tx:#EDEFF0; --tx2:#A8B2BC; --tx3:#55626F;
+  --tx:#EDEFF0; --tx2:#A8B2BC; --tx3:#7C8996;
   --accd:#35BDD9; --navbg:#12181F; --navtx:#7C8996;
   --btnbg:#0FA3C4; --btnfg:#0A0E12; --tint:#0E2C36;
+  /* The light red is only 3.9:1 on these panels, so error text and the
+     zero-stock chip get a lighter one here — same hue, more lightness. */
+  --neg:#DE5A5A;
 }
 
 /* Double tap on a control zoomed the page instead of acting. This turns that
@@ -179,8 +182,16 @@ a.navtab { text-decoration:none; }
 /* KPI and tables */
 .kpi { background:var(--panel); padding:16px 18px; }
 .kpi.inv { background:var(--btnbg); }
-.kpi.inv .thr { color:#7C8996; }
+/* Darker label on the light-mode card, at the user's request (3.10:1,
+   below the 4.5:1 AA threshold the rest of this file targets). */
+.kpi.inv .thr { color:#55626F; }
 .kpi.inv .stat { color:#000000; }
+/* --btnbg flips from near-black to cyan in dark mode, so this card turns
+   cyan while its label and figure keep their light-mode colours — the
+   figure was var(--acc) on var(--btnbg), cyan on cyan, and vanished.
+   Pair them with the card's own foreground, as .btnp and .tot already do. */
+.app.dark .kpi.inv .thr { color:#0B2830; }
+.app.dark .kpi.inv .stat { color:var(--btnfg); }
 .stat { font-family:"IBM Plex Mono", monospace; font-variant-numeric:tabular-nums;
         font-weight:500; font-size:26px; margin-top:7px; }
 .grid4 { display:grid; grid-template-columns:repeat(4,1fr); gap:1px; background:var(--line);
