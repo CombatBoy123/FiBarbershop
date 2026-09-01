@@ -15,6 +15,31 @@ const { seedDefaults } = require("./seed");
 const app = express();
 const PORT = process.env.PORT || 4100;
 
+// Don't advertise the framework.
+app.disable("x-powered-by");
+
+// Behind Render/Cloudflare there is one proxy hop: trust it so req.ip is the
+// real client (the login rate limiter relies on it) and req.secure reflects the
+// TLS the browser actually used (the HSTS header below relies on it).
+app.set("trust proxy", 1);
+
+// Security headers on every response. Six headers are cheaper to read here than
+// a helmet dependency; the till's stricter Content-Security-Policy is set on
+// the /app route itself, because the saved storefront pages under public/site
+// carry inline scripts and third-party assets a strict policy would break.
+app.use((req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  res.setHeader("X-Frame-Options", "SAMEORIGIN");
+  res.setHeader("Permissions-Policy", "geolocation=(), microphone=(), camera=()");
+  // Only pin HTTPS over a genuinely secure connection, so local http testing is
+  // never locked to https by a lingering HSTS entry.
+  if (req.secure) {
+    res.setHeader("Strict-Transport-Security", "max-age=15552000; includeSubDomains");
+  }
+  next();
+});
+
 const allowed = (process.env.ALLOWED_ORIGIN || "*")
   .split(",")
   .map((s) => s.trim())
@@ -31,6 +56,18 @@ const isDate = (v) => typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v);
 function num(v, fallback = 0) {
   const n = Number(v);
   return Number.isFinite(n) ? n : fallback;
+}
+
+// A barbershop price or cost is never negative and never approaches a million
+// euros. Unlike num(), which silently turns junk into 0, this rejects bad input
+// so a typo or a tampered request becomes a 400 instead of a -100 € product.
+const MAX_MONEY = 1000000;
+function money(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n < 0 || n > MAX_MONEY) {
+    throw Object.assign(new Error("Vigane summa. Lubatud on 0–" + MAX_MONEY + " €."), { status: 400 });
+  }
+  return n;
 }
 
 function addDays(dateStr, days) {
@@ -68,6 +105,27 @@ function noteFailure(email) {
   else failures.set(email, { n: rec.n + 1, at: Date.now() });
 }
 
+// Per-IP guard, complementing the per-email lockout above. The email lock stops
+// hammering one account; this stops password-spraying (many emails, a few tries
+// each) from a single source. The window is deliberately generous — a real shop
+// logs in a handful of times a day, so 40 login POSTs in 10 minutes from one IP
+// is already far past normal use and well short of anything brute-force needs.
+const ipHits = new Map();
+const IP_MAX = 40;
+const IP_WINDOW_MS = 10 * 60 * 1000;
+
+function ipLoginBlocked(ip) {
+  const rec = ipHits.get(ip);
+  if (!rec || Date.now() - rec.at > IP_WINDOW_MS) return false;
+  return rec.n >= IP_MAX;
+}
+
+function noteIpLogin(ip) {
+  const rec = ipHits.get(ip);
+  if (!rec || Date.now() - rec.at > IP_WINDOW_MS) ipHits.set(ip, { n: 1, at: Date.now() });
+  else rec.n += 1;
+}
+
 app.post(
   "/api/register",
   wrap(async (req, res) => {
@@ -99,6 +157,12 @@ app.post(
 app.post(
   "/api/login",
   wrap(async (req, res) => {
+    const ip = req.ip || "?";
+    if (ipLoginBlocked(ip)) {
+      return res.status(429).json({ error: "Liiga palju katseid. Proovi mõne minuti pärast uuesti." });
+    }
+    noteIpLogin(ip);
+
     const email = String(req.body.email || "").trim().toLowerCase();
     const password = String(req.body.password || "");
     if (loginBlocked(email)) {
@@ -228,7 +292,7 @@ app.post(
       `INSERT INTO services (user_id, name, price, note, sort_order)
        VALUES ($1,$2,$3,$4,(SELECT COALESCE(MAX(sort_order)+1,0) FROM services WHERE user_id=$1))
        RETURNING *`,
-      [req.userId, name, num(req.body.price), String(req.body.note || "")]
+      [req.userId, name, money(req.body.price), String(req.body.note || "")]
     );
     res.status(201).json({ service: r.rows[0] });
   })
@@ -245,7 +309,7 @@ app.put(
         req.userId,
         Number(req.params.id),
         req.body.name === undefined ? null : String(req.body.name),
-        req.body.price === undefined ? null : num(req.body.price),
+        req.body.price === undefined ? null : money(req.body.price),
         req.body.note === undefined ? null : String(req.body.note),
       ]
     );
@@ -278,7 +342,7 @@ app.post(
       `INSERT INTO products (user_id, name, cost, price, image_url, sort_order)
        VALUES ($1,$2,$3,$4,$5,(SELECT COALESCE(MAX(sort_order)+1,0) FROM products WHERE user_id=$1))
        RETURNING *`,
-      [req.userId, name, num(req.body.cost), num(req.body.price), String(req.body.image_url || "")]
+      [req.userId, name, money(req.body.cost), money(req.body.price), String(req.body.image_url || "")]
     );
     res.status(201).json({ product: { ...r.rows[0], stock: 0 } });
   })
@@ -296,8 +360,8 @@ app.put(
         req.userId,
         Number(req.params.id),
         req.body.name === undefined ? null : String(req.body.name),
-        req.body.cost === undefined ? null : num(req.body.cost),
-        req.body.price === undefined ? null : num(req.body.price),
+        req.body.cost === undefined ? null : money(req.body.cost),
+        req.body.price === undefined ? null : money(req.body.price),
         req.body.image_url === undefined ? null : String(req.body.image_url),
       ]
     );
@@ -382,8 +446,8 @@ app.post(
     }));
     for (const l of lines) {
       if (!l.name) return res.status(400).json({ error: "Real puudub nimi." });
-      if (!(l.qty > 0)) return res.status(400).json({ error: "Vigane kogus real: " + l.name });
-      if (l.price < 0) return res.status(400).json({ error: "Vigane hind real: " + l.name });
+      if (!(l.qty > 0) || l.qty > 100000) return res.status(400).json({ error: "Vigane kogus real: " + l.name });
+      if (l.price < 0 || l.price > MAX_MONEY) return res.status(400).json({ error: "Vigane hind real: " + l.name });
     }
 
     // Totals are recomputed here from the lines. The client's own total is
@@ -678,8 +742,26 @@ app.get("/pages/broneeri-aeg", sitePage("broneeri.html"));
 app.get("/collections/all", sitePage("tooted.html"));
 app.get("/pages/contact", sitePage("kontakt.html"));
 
-// The till.
+// The till. It loads only same-origin code and Google Fonts and has no inline
+// <script>, so it can carry a strict Content-Security-Policy — which the saved
+// storefront pages cannot, hence scoping it to this route. 'unsafe-inline' is
+// kept for style only, because the design uses inline style attributes; scripts
+// stay 'self'-only, so an injected <script> or onclick would not run.
 app.get(["/app", "/app/*"], (req, res) => {
+  res.setHeader(
+    "Content-Security-Policy",
+    [
+      "default-src 'self'",
+      "script-src 'self'",
+      "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+      "font-src 'self' https://fonts.gstatic.com",
+      "img-src 'self' data:",
+      "connect-src 'self'",
+      "frame-ancestors 'none'",
+      "base-uri 'self'",
+      "form-action 'self'",
+    ].join("; ")
+  );
   res.sendFile(path.join(__dirname, "..", "public", "app.html"));
 });
 
@@ -693,6 +775,11 @@ app.get("*", (req, res) => {
 // Errors thrown inside a route land here. `status` is set deliberately by the
 // sale transaction for the cases the till should show verbatim.
 app.use((err, req, res, next) => {
+  // A malformed or oversized request body (express.json) shouldn't echo the
+  // parser's internal message — return a generic 400 instead.
+  if (err && (err.type === "entity.parse.failed" || err.type === "entity.too.large")) {
+    return res.status(400).json({ error: "Vigane päring." });
+  }
   const status = err.status || 500;
   if (status >= 500) console.error(err);
   res.status(status).json({ error: status >= 500 ? "Serveri viga. Proovi uuesti." : err.message });
