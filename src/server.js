@@ -450,6 +450,11 @@ app.post(
       if (l.price < 0 || l.price > MAX_MONEY) return res.status(400).json({ error: "Vigane hind real: " + l.name });
     }
 
+    // Optional: the till fills these in only when the invoice has to be made
+    // out to a named person or company.
+    const buyerName = String(body.buyerName || "").trim().slice(0, 200);
+    const buyerDetails = String(body.buyerDetails || "").trim().slice(0, 500);
+
     // Totals are recomputed here from the lines. The client's own total is
     // never trusted — it is a display value, not an input.
     const tip = Math.max(0, num(body.tip));
@@ -524,8 +529,11 @@ app.post(
           nr,
           date,
           addDays(date, settings.payment_days),
-          String(body.buyerName || "Eraklient").slice(0, 200),
-          String(body.buyerDetails || "Sularaha-/kaardimüük salongis").slice(0, 500),
+          buyerName || "Eraklient",
+          // The walk-in note only fits a sale with no named buyer. Once the
+          // till has been given a name, an empty details line stays empty
+          // rather than telling a company how its own invoice was paid.
+          buyerDetails || (buyerName ? "" : "Sularaha-/kaardimüük salongis"),
           euros(netCents),
           euros(vatCents),
           rate,

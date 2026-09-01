@@ -19,6 +19,11 @@ export const S = {
   // the sale being rung up
   draft: {
     lines: [],   // { key, productId|null, name, qty, price }
+    // Left empty for an ordinary walk-in; the server then writes "Eraklient"
+    // on the invoice. Filled in when a company or a named person needs the
+    // invoice made out to them.
+    buyerName: "",
+    buyerDetails: "",
     tip: 0,
     method: "card",  // cash | card | split
     cash: 0,
@@ -68,6 +73,8 @@ export function updateLine(key, patch) {
 
 export function clearDraft() {
   S.draft.lines = [];
+  S.draft.buyerName = "";
+  S.draft.buyerDetails = "";
   S.draft.tip = 0;
   S.draft.method = "card";
   S.draft.cash = 0;

@@ -147,6 +147,12 @@ const actions = {
     refreshTotals();
   },
 
+  // The buyer fields are free text that no figure depends on, so nothing is
+  // repainted: a rebuild here would pull the caret out of the field mid-word.
+  setBuyer(patch) {
+    Object.assign(S.draft, patch);
+  },
+
   clearDraft() {
     clearDraft();
     render();
@@ -166,6 +172,8 @@ const actions = {
           qty: l.qty,
           price: l.price,
         })),
+        buyerName: S.draft.buyerName.trim(),
+        buyerDetails: S.draft.buyerDetails.trim(),
         tip: S.draft.tip,
         cash: parseNum(S.draft.cash),
         card: parseNum(S.draft.card),

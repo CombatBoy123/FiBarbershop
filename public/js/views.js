@@ -210,6 +210,22 @@ export function viewPos(actions) {
           h("p", { class: "thr", text: expectedNr(), style: "margin:0" })
         ),
 
+        h("p", { class: "thr", text: "Ostja", style: "margin:14px 0 8px" }),
+        h("div", { style: "display:flex;flex-direction:column;gap:10px" },
+          field("Nimi või ettevõte", inp({
+            id: "posBuyerName", type: "text", value: S.draft.buyerName,
+            placeholder: "Eraklient", autocomplete: "off", maxlength: "200",
+            oninput: (e) => actions.setBuyer({ buyerName: e.target.value }),
+          })),
+          field("Registrikood, aadress või e-post", inp({
+            id: "posBuyerDetails", type: "text", value: S.draft.buyerDetails,
+            placeholder: "Nt. 12345678 · Aardla 130, Tartu", autocomplete: "off", maxlength: "500",
+            oninput: (e) => actions.setBuyer({ buyerDetails: e.target.value }),
+          }))
+        ),
+        h("p", { class: "lab", style: "color:var(--tx3);font-weight:400;margin:8px 0 0;line-height:1.5",
+                 text: "Täida ainult siis, kui arve peab olema kellegi nimel. Muidu läheb arvele Eraklient." }),
+
         h("div", { style: "margin-top:12px" },
           draftRows.length ? draftRows : h("p", { class: "empty", text: "Vali vasakult teenus või toode." })
         ),
