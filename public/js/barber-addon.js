@@ -125,18 +125,10 @@
     }
   }
 
-  // The label shown on the tile — same wording as the table we built.
-  function priceLabel(price, now) {
-    now = now || new Date();
-    switch (price.type) {
-      case "fixed": return price.amount + " €";
-      case "range": return price.min + "–" + price.max + " €"; // en-dash
-      case "free": return "Tasuta";
-      case "surcharge": return "+" + price.amount + " €";
-      case "scheduled": return resolveScheduled(price, now) + " €";
-      default: return "";
-    }
-  }
+  // Money formatted like the till (comma decimals, e.g. "30,00 €"), so the
+  // price on the tile is exactly the amount that lands on the invoice.
+  function num2(v) { return (Math.round((Number(v) || 0) * 100) / 100).toFixed(2).replace(".", ","); }
+  function eur(v) { return num2(v) + " €"; }
 
   // ------------------------------------------------------------ state
   var LS = "fi.activeBarber";
@@ -329,7 +321,7 @@
 
       var svc = barberServiceForCategory(b, cat);
       var priceEl = tile.querySelector(".svcp");
-      if (priceEl && svc) priceEl.textContent = priceLabel(svc.price);
+      if (priceEl && svc) priceEl.textContent = eur(priceAmount(svc.price));
 
       var unavailable = !!(cat && STRIKEABLE[cat] && !offered[cat]);
       tile.classList.toggle("fi-unavail", unavailable);
