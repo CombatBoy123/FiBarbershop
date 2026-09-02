@@ -2,14 +2,11 @@
 //
 // A single bolt-on file: it does NOT modify any of the app's own modules.
 // The only wiring it needs is one <script> tag in app.html. It injects its
-// own styles, adds the barber selector to the navbar, and shows the active
-// barber's price list and cut times on the Kiirmüük screen.
-//
-// Because it lives outside the app's modules, it cannot push a line into the
-// till's draft for you (that call is internal to the app). It surfaces each
-// barber's prices and times as a clear reference the operator reads while
-// ringing the sale up on the existing tiles. The fully integrated version
-// (click-a-tile-adds-the-line) is in git history at commit 338c35c.
+// own styles and adds the barber selector to the navbar. On the Kiirmüük
+// screen it stamps the active barber onto the "Uus arve" header and greys
+// out (strikes through) the service tiles the chosen barber does not offer,
+// so the operator keeps the shop's full clickable service row but can only
+// pick services that barber actually performs.
 
 (function () {
   "use strict";
@@ -68,22 +65,6 @@
     if (!cur && entries.length) cur = entries[0];
     return cur ? cur.amount : 0;
   }
-  function formatDuration(min) {
-    var m = Number(min) || 0, h = Math.floor(m / 60), r = m % 60;
-    if (h === 0) return r + " min";
-    return r > 0 ? h + " h " + r + " min" : h + " h";
-  }
-  function priceLabel(price, now) {
-    now = now || new Date();
-    switch (price.type) {
-      case "fixed": return price.amount + " €";
-      case "range": return price.min + "–" + price.max + " €";
-      case "free": return "Tasuta";
-      case "surcharge": return "+" + price.amount + " €";
-      case "scheduled": return resolveScheduled(price, now) + " €";
-      default: return "";
-    }
-  }
   function startingPrice(b, now) {
     now = now || new Date();
     var min = null;
@@ -97,6 +78,31 @@
     return min;
   }
 
+  // Classify a service name (from either the barber data or a shop tile) into a
+  // category, so a barber's offering can be matched against the shop's tiles
+  // even when the wording differs (e.g. "Tartu lõikuspäev" is a haircut).
+  function category(name) {
+    var n = String(name || "").toLowerCase();
+    if (n.indexOf("habe") >= 0) return "beard";
+    if (n.indexOf("design") >= 0 || n.indexOf("tattoo") >= 0) return "design";
+    if (n.indexOf("afterhour") >= 0 || n.indexOf("ületund") >= 0 || n.indexOf("uletund") >= 0) return "afterhours";
+    if (n.indexOf("tervitusjook") >= 0 || n.indexOf("welcome") >= 0 || n.indexOf("drink") >= 0) return "welcomedrink";
+    if (n.indexOf("muu") >= 0 || n.indexOf("käsitsi") >= 0 || n.indexOf("kasitsi") >= 0 || n.indexOf("manual") >= 0) return "manual";
+    if (n.indexOf("lõik") >= 0 || n.indexOf("loik") >= 0 || n.indexOf("haircut") >= 0) return "haircut";
+    return null;
+  }
+
+  // Only real barber treatments are ever struck. A haircut is offered by every
+  // barber, and the welcome drink and the manual "Muu" line are shop-wide, so
+  // none of those is ever crossed out.
+  var STRIKEABLE = { beard: true, design: true, afterhours: true };
+
+  function offeredCategories(b) {
+    var set = {};
+    (b.services || []).forEach(function (s) { var c = category(s.name); if (c) set[c] = true; });
+    return set;
+  }
+
   // ------------------------------------------------------------ state
   var LS = "fi.activeBarber";
   var activeId = defaultBarber().id;
@@ -107,7 +113,7 @@
     activeId = id;
     try { localStorage.setItem(LS, id); } catch (e) {}
     updateLabel();
-    refreshPos();
+    applyToPos();
   }
 
   // ------------------------------------------------------------ styles
@@ -138,8 +144,10 @@
       ".bsel-opt-meta{grid-column:1;font:400 11px 'IBM Plex Mono',monospace;letter-spacing:.04em;color:var(--tx3)}",
       ".bsel-check{grid-column:2;grid-row:1 / span 2;color:var(--acc);font-weight:700;opacity:0}",
       ".bsel-opt[aria-selected='true'] .bsel-check{opacity:1}",
-      "#fi-bsw-pospanel .svc{cursor:default}",
-      "#fi-bsw-pospanel .svc:hover{border-color:var(--line)}",
+      // a service this barber does not offer: struck through, dimmed, not clickable
+      ".svc.fi-unavail{opacity:.45;cursor:not-allowed}",
+      ".svc.fi-unavail:hover{border-color:var(--line)}",
+      ".svc.fi-unavail .svcn{text-decoration:line-through}",
       "@media (max-width:760px){.bsel-name{max-width:112px}}",
     ].join("");
     document.head.appendChild(s);
@@ -166,7 +174,7 @@
     nameBtn.type = "button";
     nameBtn.setAttribute("aria-haspopup", "listbox");
     nameBtn.setAttribute("aria-expanded", "false");
-    nameBtn.title = "Aktiivne barber — hinnad ja ajad";
+    nameBtn.title = "Aktiivne barber — piirab valitavaid teenuseid";
     nameBtn.appendChild(el("span", "bsel-text", active().displayName));
 
     var caret = el("button", "bsel-caret");
@@ -248,72 +256,63 @@
     else if (e.key === "Escape") { e.preventDefault(); closeMenu(true); }
   }
 
-  // ------------------------------------------------------------ Kiirmüük panel
-  // Shows the active barber's prices and cut times on the till screen, and
-  // stamps the barber's name into the "Uus arve" eyebrow. Re-applied after
-  // every re-render of #view (the app rebuilds that node on each action).
+  // ------------------------------------------------------------ Kiirmüük
+  // Stamp the barber onto the "Uus arve" eyebrow and strike out the service
+  // tiles this barber does not offer. Runs on every re-render of #view (the
+  // app rebuilds that node on each action) and on every barber change.
   function isPos(view) {
     var h1 = view.querySelector(".h1");
     return h1 && h1.textContent.trim().toLowerCase() === "kiirmüük";
   }
 
-  function buildPosPanel(b) {
-    var wrap = el("div", "panel");
-    wrap.id = "fi-bsw-pospanel";
-    ["tl", "tr", "bl", "br"].forEach(function (p) {
-      var m = el("span", "mk " + p, "+"); m.setAttribute("aria-hidden", "true"); wrap.appendChild(m);
-    });
-    wrap.appendChild(el("p", "thr", "Aktiivne barber · " + b.displayName + " — hinnad ja ajad"));
-    var grid = el("div", "cardgrid");
-    b.services.forEach(function (s) {
-      var card = el("div", "svc");
-      card.appendChild(el("span", "svcn", s.name));
-      card.appendChild(el("span", "svcp", priceLabel(s.price)));
-      card.appendChild(el("span", "svcm", formatDuration(s.durationMin) + (s.isAddOn ? " · lisateenus" : "")));
-      grid.appendChild(card);
-    });
-    wrap.appendChild(grid);
-    return wrap;
-  }
-
-  function refreshPos() {
+  function applyToPos() {
     var view = document.getElementById("view");
-    if (!view) return;
-    var old = document.getElementById("fi-bsw-pospanel");
-    if (!isPos(view)) { if (old) old.remove(); return; }
-
+    if (!view || !isPos(view)) return;
     var b = active();
-    // stamp barber into the eyebrow (store the original once so it doesn't stack)
+
+    // stamp barber into the eyebrow (keep the original so it never stacks)
     var eyebrow = view.querySelector(".eyebrow");
     if (eyebrow) {
       if (eyebrow.dataset.fiOrig == null) eyebrow.dataset.fiOrig = eyebrow.textContent;
       eyebrow.textContent = eyebrow.dataset.fiOrig + " · " + b.displayName;
     }
 
-    var panel = buildPosPanel(b);
-    if (old) { old.replaceWith(panel); return; }
-    var cols = view.querySelector(".cols");
-    if (cols) view.insertBefore(panel, cols);
-    else view.appendChild(panel);
+    // grey out / strike the service tiles this barber does not perform.
+    // Products (.svc.prod) are stock items, never barber services — leave them.
+    var offered = offeredCategories(b);
+    view.querySelectorAll(".svc:not(.prod)").forEach(function (tile) {
+      var nameEl = tile.querySelector(".svcn");
+      if (!nameEl) return;
+      var cat = category(nameEl.textContent);
+      var unavailable = !!(cat && STRIKEABLE[cat] && !offered[cat]);
+      tile.classList.toggle("fi-unavail", unavailable);
+      if (tile.tagName === "BUTTON") tile.disabled = unavailable;
+      tile.setAttribute("aria-disabled", unavailable ? "true" : "false");
+      if (unavailable) tile.title = "Seda teenust " + b.displayName + " ei paku";
+      else if (tile.title && tile.title.indexOf("ei paku") >= 0) tile.removeAttribute("title");
+    });
   }
 
   // ------------------------------------------------------------ boot + observe
+  var obs = null;
+  function startObserving() { if (obs) obs.observe(document.body, { childList: true, subtree: true }); }
+
+  // Disconnect while we touch the DOM: applyToPos rewrites the eyebrow text,
+  // which is itself a mutation, so leaving the observer connected would loop.
+  function onMutate() {
+    obs.disconnect();
+    buildSelector();
+    applyToPos();
+    startObserving();
+  }
+
   function boot() {
     injectStyles();
     buildSelector();
-    refreshPos();
-
+    applyToPos();
     // The app rebuilds #view and toggles #app on login; re-apply on any change.
-    var obs = new MutationObserver(function () {
-      buildSelector();
-      // guard against reacting to our own insertion: only act when our panel
-      // is missing or the eyebrow needs (re)stamping.
-      var view = document.getElementById("view");
-      if (!view) return;
-      var needPanel = isPos(view) && !document.getElementById("fi-bsw-pospanel");
-      if (needPanel) refreshPos();
-    });
-    obs.observe(document.body, { childList: true, subtree: true });
+    obs = new MutationObserver(onMutate);
+    startObserving();
   }
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);
