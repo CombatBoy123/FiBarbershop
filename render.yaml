@@ -1,0 +1,31 @@
+# render.yaml — Render Blueprint for Fi Barbershop.
+#
+# Captures how the service is built and run, so it can be recreated on Render
+# without hand-typing the settings. Secrets are NOT stored here: DATABASE_URL
+# and JWT_SECRET are marked sync:false, so Render prompts for them in the
+# dashboard (Environment tab) and keeps them out of the repo.
+#
+# Note: a Blueprint (and any Render deploy) still needs Render to be able to
+# clone the repo. If the GitHub App connection is broken, use "New Web Service
+# -> Public Git Repository" with https://github.com/CombatBoy123/FiBarbershop,
+# which clones anonymously and does not depend on the GitHub connection.
+
+services:
+  - type: web
+    name: fibarbershop
+    runtime: node
+    plan: free            # change to your current plan if it isn't free
+    branch: main
+    buildCommand: npm install
+    startCommand: npm start
+    # The app reads process.env.PORT, which Render injects automatically,
+    # so PORT does not need to be set here.
+    envVars:
+      - key: DATABASE_URL          # same Postgres URL as before -> keeps all data + logins
+        sync: false
+      - key: JWT_SECRET            # same secret as before
+        sync: false
+      - key: ALLOWED_ORIGIN
+        value: "*"
+      - key: ALLOW_PUBLIC_REGISTER
+        value: "0"
