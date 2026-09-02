@@ -103,6 +103,41 @@
     return set;
   }
 
+  // The barber's own service in a given category (or null), so a shop tile can
+  // be repriced to this barber's price.
+  function barberServiceForCategory(b, cat) {
+    if (!cat) return null;
+    var found = null;
+    (b.services || []).forEach(function (s) { if (!found && category(s.name) === cat) found = s; });
+    return found;
+  }
+
+  // The numeric price dropped into the draft when a tile is clicked.
+  function priceAmount(price, now) {
+    now = now || new Date();
+    switch (price.type) {
+      case "fixed": return price.amount;
+      case "range": return price.min;           // adds the lower bound; editable in the draft
+      case "free": return 0;
+      case "surcharge": return price.amount;
+      case "scheduled": return resolveScheduled(price, now);
+      default: return 0;
+    }
+  }
+
+  // The label shown on the tile — same wording as the table we built.
+  function priceLabel(price, now) {
+    now = now || new Date();
+    switch (price.type) {
+      case "fixed": return price.amount + " €";
+      case "range": return price.min + "–" + price.max + " €"; // en-dash
+      case "free": return "Tasuta";
+      case "surcharge": return "+" + price.amount + " €";
+      case "scheduled": return resolveScheduled(price, now) + " €";
+      default: return "";
+    }
+  }
+
   // ------------------------------------------------------------ state
   var LS = "fi.activeBarber";
   var activeId = defaultBarber().id;
@@ -113,7 +148,7 @@
     activeId = id;
     try { localStorage.setItem(LS, id); } catch (e) {}
     updateLabel();
-    applyToPos();
+    apply();
   }
 
   // ------------------------------------------------------------ styles
@@ -265,9 +300,15 @@
     return h1 && h1.textContent.trim().toLowerCase() === "kiirmüük";
   }
 
+  // Tracks whether we are inside the Kiirmüük screen and how many draft lines
+  // there were, so a newly rung-up line can be repriced without touching the
+  // lines already in the draft or a price the operator typed by hand.
+  var posActive = false;
+  var lastLineCount = 0;
+
   function applyToPos() {
     var view = document.getElementById("view");
-    if (!view || !isPos(view)) return;
+    if (!view || !isPos(view)) { posActive = false; lastLineCount = 0; return; }
     var b = active();
 
     // stamp barber into the eyebrow (keep the original so it never stacks)
@@ -277,13 +318,19 @@
       eyebrow.textContent = eyebrow.dataset.fiOrig + " · " + b.displayName;
     }
 
-    // grey out / strike the service tiles this barber does not perform.
-    // Products (.svc.prod) are stock items, never barber services — leave them.
+    // For each service tile: show THIS barber's price (same as the table), and
+    // strike/disable treatments the barber does not perform. Products
+    // (.svc.prod) are stock items, never barber services — leave them.
     var offered = offeredCategories(b);
     view.querySelectorAll(".svc:not(.prod)").forEach(function (tile) {
       var nameEl = tile.querySelector(".svcn");
       if (!nameEl) return;
       var cat = category(nameEl.textContent);
+
+      var svc = barberServiceForCategory(b, cat);
+      var priceEl = tile.querySelector(".svcp");
+      if (priceEl && svc) priceEl.textContent = priceLabel(svc.price);
+
       var unavailable = !!(cat && STRIKEABLE[cat] && !offered[cat]);
       tile.classList.toggle("fi-unavail", unavailable);
       if (tile.tagName === "BUTTON") tile.disabled = unavailable;
@@ -291,16 +338,45 @@
       if (unavailable) tile.title = "Seda teenust " + b.displayName + " ei paku";
       else if (tile.title && tile.title.indexOf("ei paku") >= 0) tile.removeAttribute("title");
     });
+
+    // Reprice a freshly added draft line to this barber's price. On first entry
+    // to the screen we only take the baseline count, so existing lines and
+    // hand-typed prices are never overwritten — only genuinely new lines are.
+    var dlines = view.querySelectorAll(".dline");
+    var count = dlines.length;
+    if (!posActive) {
+      posActive = true;
+    } else if (count > lastLineCount && count > 0) {
+      repriceLine(dlines[count - 1], b);
+    }
+    lastLineCount = count;
+  }
+
+  // Set the newest draft line's price field to the active barber's price and
+  // fire an input event so the app updates its own draft state and totals.
+  function repriceLine(line, b) {
+    var nameEl = line.querySelector(".tr");
+    var inputs = line.querySelectorAll("input");
+    if (!nameEl || inputs.length < 2) return;
+    var svc = barberServiceForCategory(b, category(nameEl.textContent));
+    if (!svc) return; // welcome drink, manual line, or an unknown service
+    var amt = String(priceAmount(svc.price));
+    var priceInput = inputs[1];
+    if (priceInput.value !== amt) {
+      priceInput.value = amt;
+      priceInput.dispatchEvent(new Event("input", { bubbles: true }));
+    }
   }
 
   // ------------------------------------------------------------ boot + observe
   var obs = null;
   function startObserving() { if (obs) obs.observe(document.body, { childList: true, subtree: true }); }
 
-  // Disconnect while we touch the DOM: applyToPos rewrites the eyebrow text,
-  // which is itself a mutation, so leaving the observer connected would loop.
-  function onMutate() {
-    obs.disconnect();
+  // All our DOM writes (eyebrow text, tile prices, draft-line reprice) are
+  // themselves mutations, so we detach the observer while applying and reattach
+  // after — otherwise the observer would loop on our own edits.
+  function apply() {
+    if (obs) obs.disconnect();
     buildSelector();
     applyToPos();
     startObserving();
@@ -308,10 +384,9 @@
 
   function boot() {
     injectStyles();
-    buildSelector();
-    applyToPos();
+    apply();
     // The app rebuilds #view and toggles #app on login; re-apply on any change.
-    obs = new MutationObserver(onMutate);
+    obs = new MutationObserver(apply);
     startObserving();
   }
 
