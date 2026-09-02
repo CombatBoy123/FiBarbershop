@@ -8,6 +8,9 @@ export const S = {
   user: null,
   tab: "pos",
   theme: "light",
+  // Which barber is ringing up: drives the Kiirmüük price list and cut times.
+  // Set from localStorage on boot; defaults to the shop's default barber.
+  activeBarberId: null,
   settings: null,
   services: [],
   products: [],

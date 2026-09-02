@@ -10,6 +10,7 @@ import {
   S, draftVat, paymentMismatch, draftTotal, METHOD_LABEL,
   ledgerWithBalance, ledgerTotals, dayFigures, stockValue, lowStock, stockStatus, isCancelled,
 } from "./state.js";
+import { barberById, priceAmount, priceLabel, formatDuration } from "./barbers.data.js";
 
 // ------------------------------------------------------------- fragments
 
@@ -144,16 +145,31 @@ export function viewPos(actions) {
   const askTip = !(S.settings && S.settings.ask_tip === false);
   const showVat = !(S.settings && S.settings.show_vat === false);
 
-  const serviceCards = S.services.map((s) =>
-    h("button", {
-      class: "svc", type: "button",
-      onclick: () => actions.addLine({ name: s.name, price: Number(s.price) }),
-    },
-      h("span", { class: "svcn", text: s.name }),
-      h("span", { class: "svcp", text: eur(s.price) }),
-      s.note ? h("span", { class: "svcm", text: s.note }) : null
-    )
-  );
+  // Service tiles come from the active barber's own price list, so the till
+  // rings up at that barber's prices and shows their time per cut. When no
+  // barber is set (data missing), fall back to the shop's shared price list.
+  const barber = barberById(S.activeBarberId);
+  const serviceCards = barber
+    ? barber.services.map((s) =>
+        h("button", {
+          class: "svc", type: "button",
+          onclick: () => actions.addLine({ name: s.name, price: priceAmount(s.price) }),
+        },
+          h("span", { class: "svcn", text: s.name }),
+          h("span", { class: "svcp", text: priceLabel(s.price) }),
+          h("span", { class: "svcm", text: formatDuration(s.durationMin) + (s.isAddOn ? " · lisateenus" : "") })
+        )
+      )
+    : S.services.map((s) =>
+        h("button", {
+          class: "svc", type: "button",
+          onclick: () => actions.addLine({ name: s.name, price: Number(s.price) }),
+        },
+          h("span", { class: "svcn", text: s.name }),
+          h("span", { class: "svcp", text: eur(s.price) }),
+          s.note ? h("span", { class: "svcm", text: s.note }) : null
+        )
+      );
 
   const productCards = S.products.map((p) => {
     const out = Number(p.stock) <= 0;
@@ -186,7 +202,7 @@ export function viewPos(actions) {
   );
 
   return [
-    head("Uus arve · " + expectedNr(), "Kiirmüük",
+    head("Uus arve · " + expectedNr() + (barber ? " · " + barber.displayName : ""), "Kiirmüük",
       h("button", { class: "btng", type: "button", onclick: actions.clearDraft }, "Tühjenda")
     ),
 
