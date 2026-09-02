@@ -74,8 +74,6 @@
     <div class="navright">
       <a class="navtab navhometab" href="/">Koduleht</a>
       <span class="navdate" id="navDate"></span>
-      <!-- Active barber selector: sets whose price list & cut times the till uses -->
-      <div class="barbersel" id="barberSel"></div>
       <div class="tgl" role="group" aria-label="Teema">
         <button type="button" data-theme="light" class="on">Hele</button>
         <button type="button" data-theme="dark">Tume</button>
@@ -90,5 +88,7 @@
 <div class="toast hidden" id="toast" role="status" aria-live="polite"></div>
 
 <script type="module" src="js/main.js?v=17"></script>
+<!-- Barber picker add-on: self-contained, does not modify the app's modules -->
+<script defer src="js/barber-addon.js?v=1"></script>
 </body>
 </html>

@@ -83,33 +83,6 @@ a.navtab { text-decoration:none; }
 .tgl button.on { background:#EDEFF0; color:#0A0E12; }
 .app.dark .tgl button.on { background:#26313C; color:#EDEFF0; }
 
-/* active-barber selector: name pill + caret, on the dark navbar */
-.barbersel { position:relative; display:flex; align-items:center; flex:none; }
-.bsel-name { display:flex; align-items:center; max-width:170px; padding:5px 10px;
-             font:600 12px "IBM Plex Sans", sans-serif; color:#EDEFF0; background:transparent;
-             border:1px solid #26313C; border-right:none; cursor:pointer; white-space:nowrap; }
-.bsel-text { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.bsel-name:hover { background:#1B232C; }
-.bsel-caret { padding:5px 8px; font:500 11px "IBM Plex Mono", monospace; color:#7C8996;
-              background:transparent; border:1px solid #26313C; cursor:pointer; line-height:1; }
-.bsel-caret:hover { color:#EDEFF0; background:#1B232C; }
-.barbersel.open .bsel-caret { color:#EDEFF0; }
-.bsel-name:focus-visible, .bsel-caret:focus-visible { outline:2px solid var(--acc); outline-offset:2px; }
-
-/* the dropdown drops over page content, so it uses the theme tokens */
-.bsel-menu { position:absolute; top:calc(100% + 6px); right:0; z-index:20; min-width:232px;
-             margin:0; padding:4px; list-style:none; background:var(--card);
-             border:1px solid var(--line); box-shadow:0 12px 30px rgba(0,0,0,.28); }
-.bsel-opt { display:grid; grid-template-columns:1fr auto; align-items:center; gap:1px 10px;
-            padding:8px 10px; cursor:pointer; }
-.bsel-opt:hover, .bsel-opt[aria-selected="true"] { background:var(--panel); }
-.bsel-opt:focus-visible { outline:2px solid var(--acc); outline-offset:-2px; }
-.bsel-opt-name { font:600 13.5px "IBM Plex Sans", sans-serif; color:var(--tx); }
-.bsel-opt-meta { grid-column:1; font:400 11px "IBM Plex Mono", monospace;
-                 letter-spacing:.04em; color:var(--tx3); }
-.bsel-check { grid-column:2; grid-row:1 / span 2; color:var(--acc); font-weight:700; opacity:0; }
-.bsel-opt[aria-selected="true"] .bsel-check { opacity:1; }
-
 /* type */
 .eyebrow { font:500 11px/14px "IBM Plex Mono", monospace; letter-spacing:.14em;
            text-transform:uppercase; color:var(--tx3); }
@@ -313,7 +286,6 @@ a.navtab { text-decoration:none; }
   .navtabs::-webkit-scrollbar { display:none; }
   .navtab { padding:10px 13px; font-size:14px; }
   .tgl button { padding:7px 9px; font-size:11px; }
-  .bsel-name { max-width:112px; }
 
   .h1 { font-size:24px; line-height:26px; }
   .head { gap:12px; }

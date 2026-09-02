@@ -7,8 +7,7 @@ import {
   syncPayment, draftTotal, draftVat, paymentMismatch, METHOD_LABEL,
 } from "./state.js";
 import { VIEWS } from "./views.js";
-import { clear, toast, eur, num, dateET, todayISO, parseNum, downloadCSV, h } from "./util.js";
-import { BARBERS, barberById, defaultBarber, startingPrice } from "./barbers.data.js";
+import { clear, toast, eur, num, dateET, todayISO, parseNum, downloadCSV } from "./util.js";
 
 const loginEl = document.getElementById("login");
 const appEl = document.getElementById("app");
@@ -27,122 +26,6 @@ function applyTheme(theme) {
   } catch (e) {
     /* storage blocked; the theme simply resets next visit */
   }
-}
-
-// ------------------------------------------------------------ barber pick
-// A compact navbar control: a name button showing the active barber and a
-// caret button that drops down the five profiles. The choice sets whose price
-// list and cut times the till uses, and is remembered across visits.
-
-const barberSelEl = document.getElementById("barberSel");
-let barberMenuOpen = false;
-
-function selectBarber(id, { rerender = true } = {}) {
-  const b = barberById(id) || defaultBarber();
-  S.activeBarberId = b.id;
-  try {
-    localStorage.setItem("fi.activeBarber", b.id);
-  } catch (e) {
-    /* storage blocked; the choice simply resets next visit */
-  }
-  updateBarberSelector();
-  if (rerender && !appEl.hidden) render();
-}
-
-function closeBarberMenu(returnFocus) {
-  if (!barberMenuOpen) return;
-  barberMenuOpen = false;
-  const menu = barberSelEl.querySelector(".bsel-menu");
-  const name = barberSelEl.querySelector(".bsel-name");
-  if (menu) menu.hidden = true;
-  if (name) name.setAttribute("aria-expanded", "false");
-  barberSelEl.classList.remove("open");
-  document.removeEventListener("mousedown", onBarberDocDown, true);
-  if (returnFocus && name) name.focus();
-}
-
-function openBarberMenu() {
-  if (barberMenuOpen) return;
-  barberMenuOpen = true;
-  const menu = barberSelEl.querySelector(".bsel-menu");
-  const name = barberSelEl.querySelector(".bsel-name");
-  if (menu) menu.hidden = false;
-  if (name) name.setAttribute("aria-expanded", "true");
-  barberSelEl.classList.add("open");
-  const sel = barberSelEl.querySelector('.bsel-opt[aria-selected="true"]') ||
-    barberSelEl.querySelector(".bsel-opt");
-  if (sel) sel.focus();
-  document.addEventListener("mousedown", onBarberDocDown, true);
-}
-
-function onBarberDocDown(e) {
-  if (!barberSelEl.contains(e.target)) closeBarberMenu(false);
-}
-
-function toggleBarberMenu() {
-  if (barberMenuOpen) closeBarberMenu(true);
-  else openBarberMenu();
-}
-
-function updateBarberSelector() {
-  if (!barberSelEl) return;
-  const active = barberById(S.activeBarberId) || defaultBarber();
-  const label = barberSelEl.querySelector(".bsel-text");
-  if (label) label.textContent = active.displayName;
-  for (const opt of barberSelEl.querySelectorAll(".bsel-opt")) {
-    opt.setAttribute("aria-selected", opt.dataset.id === active.id ? "true" : "false");
-  }
-}
-
-function buildBarberSelector() {
-  if (!barberSelEl) return;
-  const active = barberById(S.activeBarberId) || defaultBarber();
-
-  const nameBtn = h("button", {
-    class: "bsel-name", type: "button", id: "barberName",
-    "aria-haspopup": "listbox", "aria-expanded": "false",
-    title: "Aktiivne barber — määrab hinnad ja ajad",
-    onclick: toggleBarberMenu,
-  }, h("span", { class: "bsel-text", text: active.displayName }));
-
-  const caretBtn = h("button", {
-    class: "bsel-caret", type: "button", "aria-label": "Vali barber",
-    "aria-haspopup": "listbox", tabindex: "-1", onclick: toggleBarberMenu,
-  }, "▾");
-
-  const options = BARBERS.map((b) => {
-    const sp = startingPrice(b);
-    return h("li", {
-      class: "bsel-opt", role: "option", "data-id": b.id,
-      "aria-selected": b.id === active.id ? "true" : "false", tabindex: "-1",
-      onclick: () => { selectBarber(b.id); closeBarberMenu(true); },
-      onkeydown: (e) => onOptionKeydown(e, b.id),
-    },
-      h("span", { class: "bsel-opt-name", text: b.displayName }),
-      h("span", { class: "bsel-opt-meta", text: b.tier + (sp != null ? " · alates " + sp + " €" : "") }),
-      h("span", { class: "bsel-check", "aria-hidden": "true", text: "✓" })
-    );
-  });
-
-  const menu = h("ul", { class: "bsel-menu", role: "listbox", "aria-label": "Barber", hidden: true }, ...options);
-
-  nameBtn.addEventListener("keydown", (e) => {
-    if (e.key === "ArrowDown" || e.key === "Enter" || e.key === " ") { e.preventDefault(); openBarberMenu(); }
-  });
-
-  clear(barberSelEl);
-  barberSelEl.append(nameBtn, caretBtn, menu);
-}
-
-function onOptionKeydown(e, id) {
-  const opts = [...barberSelEl.querySelectorAll(".bsel-opt")];
-  const idx = opts.indexOf(document.activeElement);
-  if (e.key === "ArrowDown") { e.preventDefault(); (opts[idx + 1] || opts[0]).focus(); }
-  else if (e.key === "ArrowUp") { e.preventDefault(); (opts[idx - 1] || opts[opts.length - 1]).focus(); }
-  else if (e.key === "Home") { e.preventDefault(); opts[0].focus(); }
-  else if (e.key === "End") { e.preventDefault(); opts[opts.length - 1].focus(); }
-  else if (e.key === "Enter" || e.key === " ") { e.preventDefault(); selectBarber(id); closeBarberMenu(true); }
-  else if (e.key === "Escape") { e.preventDefault(); closeBarberMenu(true); }
 }
 
 // ----------------------------------------------------------------- render
@@ -502,17 +385,6 @@ async function boot() {
     /* storage blocked */
   }
   applyTheme(saved);
-
-  // Restore the active barber (URL of choice is localStorage here), defaulting
-  // to the shop's default, then build the navbar selector once.
-  let savedBarber = null;
-  try {
-    savedBarber = localStorage.getItem("fi.activeBarber");
-  } catch (e) {
-    /* storage blocked */
-  }
-  S.activeBarberId = barberById(savedBarber) ? savedBarber : defaultBarber().id;
-  buildBarberSelector();
 
   if (!getToken()) {
     showLogin("");
