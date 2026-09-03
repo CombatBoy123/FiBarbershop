@@ -135,10 +135,15 @@
   var activeId = defaultBarber().id;
   try { var saved = localStorage.getItem(LS); if (saved && byId[saved]) activeId = saved; } catch (e) {}
   function active() { return byId[activeId] || defaultBarber(); }
+  var repriceAllPending = false;
+
   function setActive(id) {
-    if (!byId[id]) return;
+    if (!byId[id] || id === activeId) return;
     activeId = id;
     try { localStorage.setItem(LS, id); } catch (e) {}
+    // Bring the open draft onto the new barber's prices, so nothing entered
+    // under the previous profile can reach the invoice at the wrong price.
+    repriceAllPending = true;
     updateLabel();
     apply();
   }
@@ -342,6 +347,13 @@
     // Reprice a freshly added draft line to this barber's price. On first entry
     // to the screen we only take the baseline count, so existing lines and
     // hand-typed prices are never overwritten — only genuinely new lines are.
+    // A profile switch must not leave the previous barber's prices sitting in
+    // the draft, so the whole draft is brought onto the new barber first.
+    if (repriceAllPending) {
+      repriceAllPending = false;
+      syncDraftToBarber(view, b, serviceNames);
+    }
+
     var dlines = draftLines(view);
     var count = dlines.length;
     if (!posActive) {
@@ -371,15 +383,68 @@
     // Only ever touch a line that came from a service tile. A shelf product can
     // share a word with a service — "Nishmani habeme- ja vuntsihooldusõli"
     // contains "habe" — and must keep its own price.
-    if (!serviceNames || !serviceNames[name]) return;
+    if (!serviceNames || !serviceNames[name]) return false;
     var svc = barberServiceForCategory(b, category(name));
-    if (!svc) return; // welcome drink, manual line, or an unknown service
+    if (!svc) return false; // welcome drink, manual line, or an unknown service
     var amt = String(priceAmount(svc.price));
     var priceInput = inputs[1];
-    if (priceInput.value !== amt) {
-      priceInput.value = amt;
-      priceInput.dispatchEvent(new Event("input", { bubbles: true }));
+    if (priceInput.value === amt) return false;
+    priceInput.value = amt;
+    priceInput.dispatchEvent(new Event("input", { bubbles: true }));
+    return true;
+  }
+
+  // Called when the profile changes: put the new barber's price on every
+  // service line, and drop the lines for treatments this barber does not do
+  // (there is no price to move them to, and they do not belong on this
+  // barber's invoice). Products, the welcome drink, the manual line, the
+  // buyer, the tip and the payment are all left alone.
+  function syncDraftToBarber(view, b, serviceNames) {
+    var removed = 0, repriced = 0;
+
+    // Each removal re-renders the draft, so re-query after every click rather
+    // than iterating over node references that are about to go stale.
+    for (var guard = 0; guard < 50; guard++) {
+      var target = null;
+      var lines = draftLines(view);
+      for (var i = 0; i < lines.length && !target; i++) {
+        var nameEl = lines[i].querySelector(".tr");
+        if (!nameEl) continue;
+        var nm = nameEl.textContent.trim();
+        if (!serviceNames[nm]) continue;                 // a product: leave it
+        var cat = category(nm);
+        if (!cat || !STRIKEABLE[cat]) continue;          // haircut/drink/manual
+        if (barberServiceForCategory(b, cat)) continue;  // this barber does it
+        target = lines[i];
+      }
+      if (!target) break;
+      var del = target.querySelector(".del");
+      if (!del) break;
+      del.click();
+      removed++;
     }
+
+    draftLines(view).forEach(function (line) {
+      if (repriceLine(line, b, serviceNames)) repriced++;
+    });
+
+    if (removed) {
+      toast(b.displayName + " — " + removed + " teenust eemaldatud (ei paku)");
+    } else if (repriced) {
+      toast("Hinnad uuendatud: " + b.displayName);
+    }
+  }
+
+  // Mirrors the till's own toast, so a silent price change on an open invoice
+  // is always visible to whoever is at the counter.
+  var toastTimer = null;
+  function toast(message) {
+    var el = document.getElementById("toast");
+    if (!el) return;
+    el.textContent = message;
+    el.classList.remove("hidden");
+    window.clearTimeout(toastTimer);
+    toastTimer = window.setTimeout(function () { el.classList.add("hidden"); }, 3200);
   }
 
   // ------------------------------------------------------------ boot + observe
