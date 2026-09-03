@@ -314,9 +314,11 @@
     // strike/disable treatments the barber does not perform. Products
     // (.svc.prod) are stock items, never barber services — leave them.
     var offered = offeredCategories(b);
+    var serviceNames = Object.create(null); // names of real service tiles
     view.querySelectorAll(".svc:not(.prod)").forEach(function (tile) {
       var nameEl = tile.querySelector(".svcn");
       if (!nameEl) return;
+      serviceNames[nameEl.textContent.trim()] = true;
       var cat = category(nameEl.textContent);
 
       // Keep the shop's own price so it can be put back: switching to a barber
@@ -340,23 +342,37 @@
     // Reprice a freshly added draft line to this barber's price. On first entry
     // to the screen we only take the baseline count, so existing lines and
     // hand-typed prices are never overwritten — only genuinely new lines are.
-    var dlines = view.querySelectorAll(".dline");
+    var dlines = draftLines(view);
     var count = dlines.length;
     if (!posActive) {
       posActive = true;
     } else if (count > lastLineCount && count > 0) {
-      repriceLine(dlines[count - 1], b);
+      repriceLine(dlines[count - 1], b, serviceNames);
     }
     lastLineCount = count;
   }
 
+  // The sale lines in the draft. The tip row (Jootraha) carries the same
+  // .dline class and is rendered after them, but it has no remove button and
+  // only one input — counting it would make us reprice the wrong row.
+  function draftLines(view) {
+    return [].slice.call(view.querySelectorAll(".dline")).filter(function (d) {
+      return d.querySelector(".del") && d.querySelectorAll("input").length >= 2;
+    });
+  }
+
   // Set the newest draft line's price field to the active barber's price and
   // fire an input event so the app updates its own draft state and totals.
-  function repriceLine(line, b) {
+  function repriceLine(line, b, serviceNames) {
     var nameEl = line.querySelector(".tr");
     var inputs = line.querySelectorAll("input");
     if (!nameEl || inputs.length < 2) return;
-    var svc = barberServiceForCategory(b, category(nameEl.textContent));
+    var name = nameEl.textContent.trim();
+    // Only ever touch a line that came from a service tile. A shelf product can
+    // share a word with a service — "Nishmani habeme- ja vuntsihooldusõli"
+    // contains "habe" — and must keep its own price.
+    if (!serviceNames || !serviceNames[name]) return;
+    var svc = barberServiceForCategory(b, category(name));
     if (!svc) return; // welcome drink, manual line, or an unknown service
     var amt = String(priceAmount(svc.price));
     var priceInput = inputs[1];
