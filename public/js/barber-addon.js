@@ -369,9 +369,14 @@
   // after — otherwise the observer would loop on our own edits.
   function apply() {
     if (obs) obs.disconnect();
-    buildSelector();
-    applyToPos();
-    startObserving();
+    // finally: never leave the observer detached — if it stopped, new lines
+    // would silently keep the shop's price instead of the barber's.
+    try {
+      buildSelector();
+      applyToPos();
+    } finally {
+      startObserving();
+    }
   }
 
   function boot() {
