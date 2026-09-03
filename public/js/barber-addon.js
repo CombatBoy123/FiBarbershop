@@ -319,9 +319,15 @@
       if (!nameEl) return;
       var cat = category(nameEl.textContent);
 
+      // Keep the shop's own price so it can be put back: switching to a barber
+      // who does not offer this service must not leave the previous barber's
+      // price sitting on the tile.
       var svc = barberServiceForCategory(b, cat);
       var priceEl = tile.querySelector(".svcp");
-      if (priceEl && svc) priceEl.textContent = eur(priceAmount(svc.price));
+      if (priceEl) {
+        if (priceEl.dataset.fiShopPrice == null) priceEl.dataset.fiShopPrice = priceEl.textContent;
+        priceEl.textContent = svc ? eur(priceAmount(svc.price)) : priceEl.dataset.fiShopPrice;
+      }
 
       var unavailable = !!(cat && STRIKEABLE[cat] && !offered[cat]);
       tile.classList.toggle("fi-unavail", unavailable);
