@@ -226,6 +226,54 @@ async function call(token, method, path, body) {
           c2.status === 200 ? "jaak " + stockOf(c2.data.state) : c2.status);
       }
     }
+    console.log("\n8. Admini õigused: jäädav kustutamine ja paroolid");
+    const mkSale = async (label) => {
+      const r = await call(BT, "POST", "/api/sales", {
+        lines: [{ serviceId: svc.id, name: label, qty: 1, price: 10 }],
+        cash: 10, card: 0,
+      });
+      return r.data.invoice;
+    };
+    const seq = (nr) => Number(String(nr).split("-")[1]) || 0;
+    const a = await mkSale("Kustutustest A");
+    const b2 = await mkSale("Kustutustest B");
+    ok("kaks jarjestikust numbrit", seq(b2.nr) === seq(a.nr) + 1, a.nr + " -> " + b2.nr);
+
+    ok("barber ei saa jaadavalt kustutada (403)",
+      (await call(BT, "DELETE", "/api/invoices/" + a.id + "/permanent")).status === 403);
+    ok("tuhistamata arvet ei saa jaadavalt kustutada (409)",
+      (await call(OT, "DELETE", "/api/invoices/" + a.id + "/permanent")).status === 409);
+
+    await call(OT, "POST", "/api/invoices/" + a.id + "/cancel", { reason: "test" });
+    const midPurge = await call(OT, "DELETE", "/api/invoices/" + a.id + "/permanent");
+    ok("KUU KESKELT EI SAA KUSTUTADA (jataks numbrireasse augu)", midPurge.status === 409,
+      midPurge.status + " " + JSON.stringify(midPurge.data).slice(0, 110));
+
+    await call(OT, "POST", "/api/invoices/" + b2.id + "/cancel", { reason: "test" });
+    const purge = await call(OT, "DELETE", "/api/invoices/" + b2.id + "/permanent");
+    ok("kuu viimase tuhistatud arve saab kustutada", purge.status === 200,
+      JSON.stringify(purge.data).slice(0, 140));
+    ok("arve on raamatust kadunud", !purge.data.state.invoices.some((i) => i.id === b2.id));
+    ok("auditijalg jattis kustutamisest jalje",
+      purge.data.state.audit.some((x) => x.detail && String(x.detail).indexOf(b2.nr) === 0));
+
+    const c3 = await mkSale("Kustutustest C");
+    ok("LOENDUR KEERATI TAGASI: number antakse uuesti, auku ei jaa",
+      c3.nr === b2.nr, b2.nr + " kustutatud, jargmine sai " + c3.nr);
+
+    const wrongPw = await call(BT, "PUT", "/api/me/password", { current: "vale", password: "uusparool123" });
+    ok("vale praeguse parooliga ei vaheta (401)", wrongPw.status === 401, wrongPw.status);
+    const myPw = await call(BT, "PUT", "/api/me/password", { current: "y".repeat(24), password: "uusparool123" });
+    ok("oma parooli vahetamine onnestub", myPw.status === 200, JSON.stringify(myPw.data).slice(0, 110));
+    ok("liiga luhike parool keelatud (400)",
+      (await call(BT, "PUT", "/api/me/password", { current: "uusparool123", password: "lyhike" })).status === 400);
+
+    ok("barber ei saa teise parooli lahtestada (403)",
+      (await call(BT, "PUT", "/api/staff/" + made.owner.id + "/password", { password: "misiganes123" })).status === 403);
+    const reset = await call(OT, "PUT", "/api/staff/" + made.barber.id + "/password", { password: "omanikupandud123" });
+    ok("omanik saab barberi parooli lahtestada", reset.status === 200, JSON.stringify(reset.data).slice(0, 110));
+    ok("lahtestamine laheb auditijalge",
+      reset.data.state.audit.some((x) => x.action === "parool lähtestatud"));
   } finally {
     if (shopId) {
       await query("DELETE FROM users WHERE shop_id = $1 OR id = $1", [shopId]);

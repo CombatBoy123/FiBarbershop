@@ -363,6 +363,51 @@ const actions = {
     afterWrite(result, { invoiceId: invoice.id, message: "Arve " + invoice.nr + " taastatud." });
   },
 
+  // Remove a cancelled invoice from the books for good. The number is freed
+  // and reissued rather than skipped, so the sequence stays unbroken — but the
+  // row itself is gone, so this asks for the number in full.
+  async purgeInvoice(invoice) {
+    const typed = prompt(
+      "Arve " + invoice.nr + " KUSTUTAMINE JÄÄDAVALT.\n\n" +
+      "Rida kaob raamatust täielikult ja seda ei saa tagasi võtta.\n" +
+      "Number " + invoice.nr + " vabaneb ja antakse järgmisele arvele.\n" +
+      "Auditijälge jääb kirje, et see arve kustutati.\n\n" +
+      "Kinnitamiseks kirjuta arve number:",
+      ""
+    );
+    if (typed === null) return;
+    if (String(typed).trim() !== String(invoice.nr)) {
+      return toast("Number ei klapi — arve jäi alles.");
+    }
+    const result = await guard(() => api.purgeInvoice(invoice.id));
+    if (!result) return;
+    S.selectedInvoiceId = null;
+    afterWrite(result, { message: "Arve " + invoice.nr + " kustutatud jäädavalt." });
+  },
+
+  // ---- paroolid
+  async resetStaffPassword(user) {
+    const next = prompt(
+      "Uus parool kontole " + user.email + " (vähemalt 8 tähemärki).\n\n" +
+      "Vana parool asendatakse. Anna uus töötajale edasi ja lase tal see ise vahetada.",
+      ""
+    );
+    if (next === null) return;
+    if (String(next).length < 8) return toast("Parool peab olema vähemalt 8 tähemärki.");
+    const result = await guard(() => api.resetStaffPassword(user.id, next));
+    if (!result) return;
+    afterWrite(result, { tab: "admin", message: "Parool vahetatud: " + user.email });
+  },
+
+  async changeMyPassword(form) {
+    if (String(form.next || "").length < 8) return toast("Uus parool peab olema vähemalt 8 tähemärki.");
+    if (form.next !== form.again) return toast("Uued paroolid ei klapi omavahel.");
+    const done = await guard(() => api.changeMyPassword(form.current, form.next));
+    if (!done) return;
+    render();
+    toast("Parool vahetatud.");
+  },
+
   // ---- kliendid
   openCustomer(id) {
     S.selectedCustomerId = id;

@@ -128,6 +128,21 @@ export function viewDash(actions) {
 const lineSummary = (invoice) =>
   (invoice.lines || []).map((l) => l.name).join(", ").slice(0, 60) || invoice.buyer_name;
 
+// Whether this invoice holds the last number of its month. Only such an
+// invoice can be removed outright — the counter winds back and the sequence
+// closes up. The server checks this again; here it decides whether the button
+// is worth offering at all.
+const seqOf = (nr) => Number(String(nr).split("-")[1]) || 0;
+
+function isLastOfMonth(invoice) {
+  if (!invoice.nr) return false;
+  const prefix = String(invoice.nr).split("-")[0];
+  const mine = seqOf(invoice.nr);
+  return !S.invoices.some(
+    (i) => i.id !== invoice.id && i.nr && String(i.nr).startsWith(prefix + "-") && seqOf(i.nr) > mine
+  );
+}
+
 // --------------------------------------------------------------- kiirmüük
 
 // The server allocates the real number when the sale is finished; this is the
@@ -474,13 +489,23 @@ export function viewInvoices(actions) {
   }
 
   if (selected && !isDraft(selected) && isOwner()) {
-    acts.push(
-      isCancelled(selected)
-        ? h("button", { class: "btng", type: "button",
-                        onclick: () => actions.uncancelInvoice(selected) }, "Võta tühistamine tagasi")
-        : h("button", { class: "btng", type: "button",
-                        onclick: () => actions.cancelInvoice(selected) }, "Tühista arve")
-    );
+    if (isCancelled(selected)) {
+      acts.push(
+        h("button", { class: "btng", type: "button",
+                      onclick: () => actions.uncancelInvoice(selected) }, "Võta tühistamine tagasi"),
+        // Only offered when it can be done without leaving a hole: the invoice
+        // is cancelled and holds the last number of its month.
+        isLastOfMonth(selected)
+          ? h("button", { class: "btng", type: "button",
+                          onclick: () => actions.purgeInvoice(selected) }, "Kustuta jäädavalt")
+          : null
+      );
+    } else {
+      acts.push(
+        h("button", { class: "btng", type: "button",
+                      onclick: () => actions.cancelInvoice(selected) }, "Tühista arve")
+      );
+    }
   }
 
   acts.push(h("button", { class: "btnp", type: "button", onclick: () => actions.goto("pos") }, "+ Uus müük"));
@@ -981,8 +1006,10 @@ export function viewCustomers(actions) {
 export function viewAdmin(actions) {
   const form = { name: "", email: "", password: "", role: "barber" };
 
+  const grid = "1fr 1.2fr 110px 104px 116px";
+
   const staffRows = S.staff.map((u) =>
-    h("div", { class: "row", style: "grid-template-columns:1fr 1fr 120px 110px" },
+    h("div", { class: "row", style: "grid-template-columns:" + grid },
       h("span", { class: "tr", text: u.name || "—" }),
       h("span", { class: "tr dim", text: u.email }),
       u.role === "omanik" || u.id === (S.me && S.me.id)
@@ -996,9 +1023,15 @@ export function viewAdmin(actions) {
           ? h("button", { class: "btng sm", type: "button",
                           onclick: () => actions.closeStaff(u) }, "Sulge konto")
           : h("button", { class: "btng sm", type: "button",
-                          onclick: () => actions.reopenStaff(u) }, "Taasava")
+                          onclick: () => actions.reopenStaff(u) }, "Taasava"),
+      // The forgotten-password case. The owner sets a new one; the old is
+      // replaced, never revealed.
+      h("button", { class: "btng sm", type: "button",
+                    onclick: () => actions.resetStaffPassword(u) }, "Uus parool")
     )
   );
+
+  const pw = { current: "", next: "", again: "" };
 
   const auditRows = S.audit.map((a) =>
     h("div", { class: "row", style: "grid-template-columns:120px 1fr 1fr" },
@@ -1016,8 +1049,25 @@ export function viewAdmin(actions) {
       h("div", { class: "stack" },
         h("div", {},
           h("p", { class: "thr", text: "Töötajad", style: "margin:0 0 10px" }),
-          table("1fr 1fr 120px 110px", ["Nimi", "E-post", "Roll", "Konto"],
+          table(grid, ["Nimi", "E-post", "Roll", "Konto", "Parool"],
             staffRows, "Kontosid pole.")
+        ),
+
+        panel({},
+          h("p", { class: "thr", text: "Minu parool", style: "margin:0 0 12px" }),
+          h("div", { style: "display:flex;flex-direction:column;gap:10px" },
+            field("Praegune parool", inp({
+              type: "password", autocomplete: "current-password",
+              oninput: (e) => (pw.current = e.target.value) })),
+            field("Uus parool (vähemalt 8 tähemärki)", inp({
+              type: "password", autocomplete: "new-password",
+              oninput: (e) => (pw.next = e.target.value) })),
+            field("Uus parool uuesti", inp({
+              type: "password", autocomplete: "new-password",
+              oninput: (e) => (pw.again = e.target.value) }))
+          ),
+          h("button", { class: "btnp wide", type: "button", style: "margin-top:12px",
+                        onclick: () => actions.changeMyPassword(pw) }, "Vaheta parool")
         ),
         panel({},
           h("p", { class: "thr", text: "Uus konto", style: "margin:0 0 12px" }),

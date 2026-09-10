@@ -103,11 +103,16 @@ export const api = {
   // voids an invoice: number kept, cash-book entry and stock movements undone
   cancelInvoice: (id, reason) => post("/api/invoices/" + id + "/cancel", { reason }),
   uncancelInvoice: (id) => post("/api/invoices/" + id + "/uncancel", {}),
+  // removes a cancelled invoice outright — only ever the last number of its
+  // month, so the sequence closes up behind it instead of gaining a hole
+  purgeInvoice: (id) => del("/api/invoices/" + id + "/permanent"),
 
   // staff accounts
   addStaff: (u) => post("/api/staff", u),
   updateStaff: (id, patch) => put("/api/staff/" + id, patch),
   removeStaff: (id) => del("/api/staff/" + id),
+  resetStaffPassword: (id, password) => put("/api/staff/" + id + "/password", { password }),
+  changeMyPassword: (current, password) => put("/api/me/password", { current, password }),
 
   // customers and the prices agreed with them
   addCustomer: (c) => post("/api/customers", c),
