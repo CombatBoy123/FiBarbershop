@@ -297,6 +297,21 @@ export const STATUS = {
 
 export const statusLabel = (i) => STATUS[i.status] || STATUS.makstud;
 
+// Whether this invoice holds the last number of its month. Deleting that one
+// frees the number to be issued again; deleting any earlier one leaves a gap
+// in the sequence. The delete is allowed either way — this is what lets the
+// confirmation say which of the two the owner is about to do.
+const seqOf = (nr) => Number(String(nr).split("-")[1]) || 0;
+
+export function isLastOfMonth(invoice) {
+  if (!invoice || !invoice.nr) return false;
+  const prefix = String(invoice.nr).split("-")[0];
+  const mine = seqOf(invoice.nr);
+  return !S.invoices.some(
+    (i) => i.id !== invoice.id && i.nr && String(i.nr).startsWith(prefix + "-") && seqOf(i.nr) > mine
+  );
+}
+
 // Money that is owed but has not arrived. Surfaced so an unpaid consolidated
 // invoice cannot quietly sit there for two months.
 export function unpaidInvoices() {

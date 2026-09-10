@@ -6,6 +6,7 @@ import {
   S, applyState, addLine, removeLine, updateLine, clearDraft, setMethod,
   syncPayment, draftTotal, draftVat, paymentMismatch, METHOD_LABEL,
   duplicateLine, toggleLine, loadDraftFrom, applyCustomer, lineTotal, isOwner,
+  isCancelled, isLastOfMonth,
 } from "./state.js";
 import { VIEWS } from "./views.js";
 import { clear, toast, eur, num, dateET, todayISO, parseNum, downloadCSV } from "./util.js";
@@ -367,11 +368,20 @@ const actions = {
   // and reissued rather than skipped, so the sequence stays unbroken — but the
   // row itself is gone, so this asks for the number in full.
   async purgeInvoice(invoice) {
+    // Say which of the two cases this is before asking, because they have very
+    // different consequences and only the person deleting can weigh them.
+    const last = isLastOfMonth(invoice);
+    const consequence = last
+      ? "Number " + invoice.nr + " vabaneb ja antakse järgmisele arvele — numbriritta auku ei jää."
+      : "HOIATUS: " + invoice.nr + " ei ole kuu viimane arve, nii et numbriritta jääb auk. " +
+        "Seda tuleb raamatupidajale osata seletada. Tühistamine hoiaks numbri alles.";
+
     const typed = prompt(
       "Arve " + invoice.nr + " KUSTUTAMINE JÄÄDAVALT.\n\n" +
       "Rida kaob raamatust täielikult ja seda ei saa tagasi võtta.\n" +
-      "Number " + invoice.nr + " vabaneb ja antakse järgmisele arvele.\n" +
-      "Auditijälge jääb kirje, et see arve kustutati.\n\n" +
+      (isCancelled(invoice) ? "" : "Kassakanne ja laoliikumine keeratakse tagasi.\n") +
+      consequence + "\n" +
+      "Auditijälge jääb kirje: number, ostja, summa ja kuupäev.\n\n" +
       "Kinnitamiseks kirjuta arve number:",
       ""
     );
@@ -382,7 +392,10 @@ const actions = {
     const result = await guard(() => api.purgeInvoice(invoice.id));
     if (!result) return;
     S.selectedInvoiceId = null;
-    afterWrite(result, { message: "Arve " + invoice.nr + " kustutatud jäädavalt." });
+    afterWrite(result, {
+      message: "Arve " + invoice.nr + " kustutatud" +
+        (result.leavesGap ? " · numbriritta jäi auk" : " · number vabastatud"),
+    });
   },
 
   // ---- paroolid

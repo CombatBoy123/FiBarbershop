@@ -1112,21 +1112,28 @@ app.post(
   })
 );
 
-// Remove a cancelled invoice from the books entirely.
+// Remove an invoice from the books entirely. Owner only.
 //
-// This is deliberately the narrowest door in the app. An invoice number comes
-// from a monthly counter, and a hole in that sequence is not something anyone
-// can explain to an accountant later — so this is allowed only when removing
-// the row leaves no hole: the invoice must already be cancelled, and it must
-// be the last number of its month, so the counter can simply be wound back.
-// Anything else is refused and stays cancelled, which is the honest record.
+// The shop asked for a real delete and this is it: any invoice, whatever its
+// number and whether or not it was cancelled first. The trade-off is stated
+// plainly rather than engineered away — deleting anything but the month's last
+// invoice leaves a gap in the numbering, and a gap is something the shop has
+// to be able to explain. What this endpoint does guarantee is that the books
+// never end up disagreeing with themselves:
+//
+//   * the cash-book entry and the stock movements go with it, so takings and
+//     the shelf stay right even when the invoice was never cancelled;
+//   * the counter is wound back when the invoice happens to be the month's
+//     last, so that number is reissued instead of being skipped as well;
+//   * an audit row survives the invoice, carrying the number, the buyer and
+//     the amount — after this, that row is the only record the invoice existed.
 app.delete(
   "/api/invoices/:id/permanent",
   ownerOnly,
   wrap(async (req, res) => {
     const id = Number(req.params.id);
 
-    await withTransaction(async (client) => {
+    const removed = await withTransaction(async (client) => {
       const s = await client.query("SELECT * FROM settings WHERE user_id = $1 FOR UPDATE", [req.shopId]);
       const settings = s.rows[0];
       const inv = await getInvoice(client, req.shopId, id, true);
@@ -1134,15 +1141,9 @@ app.delete(
       if (inv.status === "mustand") {
         throw Object.assign(new Error("Mustandi kustutamiseks kasuta tavalist kustutamist."), { status: 409 });
       }
-      if (!inv.cancelled_at) {
-        throw Object.assign(
-          new Error("Kustutada saab ainult juba tühistatud arve. Tühista arve enne."),
-          { status: 409 }
-        );
-      }
 
       // Same month = same MMYY prefix, and the counter is zero-padded, so the
-      // highest sequence in that prefix is the month's last invoice.
+      // highest sequence under that prefix is the month's last invoice.
       const prefix = String(inv.nr).split("-")[0];
       const seqOf = (nr) => Number(String(nr).split("-")[1]) || 0;
       const mine = seqOf(inv.nr);
@@ -1151,36 +1152,33 @@ app.delete(
         [req.shopId, prefix + "-%", id]
       );
       const highest = others.rows.reduce((m, r) => Math.max(m, seqOf(r.nr)), 0);
-      if (mine < highest) {
-        throw Object.assign(
-          new Error(
-            "Arve " + inv.nr + " ei ole kuu viimane — kustutamine jätaks numbrireasse augu. " +
-            "Kuu viimane on " + prefix + "-" + String(highest).padStart(3, "0") + ". Arve jääb tühistatuks."
-          ),
-          { status: 409 }
-        );
-      }
+      const leavesGap = mine < highest;
 
-      // The audit row outlives the invoice: invoice_id is ON DELETE SET NULL,
-      // so the number goes in the detail where it cannot be lost.
-      await audit(client, req.shopId, req.userId, "arve kustutatud jäädavalt", null,
-        inv.nr + (inv.cancel_reason ? " · " + inv.cancel_reason : ""));
+      await audit(
+        client, req.shopId, req.userId, "arve kustutatud jäädavalt", null,
+        inv.nr + " · " + inv.buyer_name + " · " + Number(inv.total).toFixed(2) + " € · " +
+          String(inv.invoice_date).slice(0, 10) +
+          (inv.cancelled_at ? " · oli tühistatud" : " · ei olnud tühistatud") +
+          (leavesGap ? " · jättis numbrireasse augu" : "")
+      );
 
-      // Cancelling already removed these, but a stray row must not survive the
-      // invoice it belongs to.
+      // Cancelling already removed these; deleting an invoice that was never
+      // cancelled has to remove them here, or the cash book would keep money
+      // for a sale that no longer exists.
       await client.query("DELETE FROM ledger_entries WHERE user_id = $1 AND invoice_id = $2", [req.shopId, id]);
       await client.query("DELETE FROM stock_movements WHERE user_id = $1 AND invoice_id = $2", [req.shopId, id]);
       await client.query("DELETE FROM invoices WHERE id = $2 AND user_id = $1", [req.shopId, id]);
 
-      // Wind the counter back so the freed number is issued again rather than
-      // being skipped — that skip would be the very gap this guards against.
-      const month = String(inv.invoice_date).slice(0, 7);
+      // Free the number rather than skipping it, when it was the last one out.
+      const month = String(inv.invoice_date).slice(0, 10).slice(0, 7);
       if (String(settings.invoice_month || "") === month && Number(settings.invoice_seq) === mine) {
         await client.query("UPDATE settings SET invoice_seq = $2 WHERE user_id = $1", [req.shopId, mine - 1]);
       }
+
+      return { nr: inv.nr, leavesGap: leavesGap };
     });
 
-    res.json({ ok: true, state: await loadState(req.shopId) });
+    res.json({ ok: true, nr: removed.nr, leavesGap: removed.leavesGap, state: await loadState(req.shopId) });
   })
 );
 

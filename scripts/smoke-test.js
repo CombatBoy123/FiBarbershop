@@ -241,25 +241,33 @@ async function call(token, method, path, body) {
 
     ok("barber ei saa jaadavalt kustutada (403)",
       (await call(BT, "DELETE", "/api/invoices/" + a.id + "/permanent")).status === 403);
-    ok("tuhistamata arvet ei saa jaadavalt kustutada (409)",
-      (await call(OT, "DELETE", "/api/invoices/" + a.id + "/permanent")).status === 409);
 
-    await call(OT, "POST", "/api/invoices/" + a.id + "/cancel", { reason: "test" });
-    const midPurge = await call(OT, "DELETE", "/api/invoices/" + a.id + "/permanent");
-    ok("KUU KESKELT EI SAA KUSTUTADA (jataks numbrireasse augu)", midPurge.status === 409,
-      midPurge.status + " " + JSON.stringify(midPurge.data).slice(0, 110));
-
-    await call(OT, "POST", "/api/invoices/" + b2.id + "/cancel", { reason: "test" });
-    const purge = await call(OT, "DELETE", "/api/invoices/" + b2.id + "/permanent");
-    ok("kuu viimase tuhistatud arve saab kustutada", purge.status === 200,
-      JSON.stringify(purge.data).slice(0, 140));
-    ok("arve on raamatust kadunud", !purge.data.state.invoices.some((i) => i.id === b2.id));
-    ok("auditijalg jattis kustutamisest jalje",
-      purge.data.state.audit.some((x) => x.detail && String(x.detail).indexOf(b2.nr) === 0));
+    // Kuu keskelt, ilma eelneva tuhistamiseta: lubatud, aga jatab augu ja
+    // peab kassakande ise ara koristama.
+    const mid = await call(OT, "DELETE", "/api/invoices/" + a.id + "/permanent");
+    ok("OMANIK SAAB KUSTUTADA TUHISTAMATA ARVE", mid.status === 200,
+      JSON.stringify(mid.data).slice(0, 140));
+    ok("server utleb, et jai auk", mid.data.leavesGap === true, String(mid.data.leavesGap));
+    ok("arve on raamatust kadunud", !mid.data.state.invoices.some((i) => i.id === a.id));
+    ok("KASSAKANNE LAKS KAASA (kassaraamatusse ei jaanud olematut muuki)",
+      !mid.data.state.ledger.some((e) => e.invoice_id === a.id));
+    ok("auditijalg sailitas numbri, ostja ja summa",
+      mid.data.state.audit.some((x) => x.detail && String(x.detail).indexOf(a.nr) === 0
+        && String(x.detail).indexOf("ei olnud tühistatud") > 0));
 
     const c3 = await mkSale("Kustutustest C");
-    ok("LOENDUR KEERATI TAGASI: number antakse uuesti, auku ei jaa",
-      c3.nr === b2.nr, b2.nr + " kustutatud, jargmine sai " + c3.nr);
+    ok("keskelt kustutatud numbrit ei anta uuesti (auk jaab, nagu hoiatati)",
+      seq(c3.nr) === seq(b2.nr) + 1, a.nr + " kustutatud, jargmine sai " + c3.nr);
+
+    // Kuu viimane: number vabaneb ja auku ei teki.
+    const lastPurge = await call(OT, "DELETE", "/api/invoices/" + c3.id + "/permanent");
+    ok("kuu viimase saab samuti kustutada", lastPurge.status === 200,
+      JSON.stringify(lastPurge.data).slice(0, 140));
+    ok("server utleb, et auku ei jaanud", lastPurge.data.leavesGap === false,
+      String(lastPurge.data.leavesGap));
+    const d4 = await mkSale("Kustutustest D");
+    ok("LOENDUR KEERATI TAGASI: vabanenud number antakse uuesti",
+      d4.nr === c3.nr, c3.nr + " kustutatud, jargmine sai " + d4.nr);
 
     const wrongPw = await call(BT, "PUT", "/api/me/password", { current: "vale", password: "uusparool123" });
     ok("vale praeguse parooliga ei vaheta (401)", wrongPw.status === 401, wrongPw.status);

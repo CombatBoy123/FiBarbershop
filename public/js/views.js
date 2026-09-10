@@ -128,21 +128,6 @@ export function viewDash(actions) {
 const lineSummary = (invoice) =>
   (invoice.lines || []).map((l) => l.name).join(", ").slice(0, 60) || invoice.buyer_name;
 
-// Whether this invoice holds the last number of its month. Only such an
-// invoice can be removed outright — the counter winds back and the sequence
-// closes up. The server checks this again; here it decides whether the button
-// is worth offering at all.
-const seqOf = (nr) => Number(String(nr).split("-")[1]) || 0;
-
-function isLastOfMonth(invoice) {
-  if (!invoice.nr) return false;
-  const prefix = String(invoice.nr).split("-")[0];
-  const mine = seqOf(invoice.nr);
-  return !S.invoices.some(
-    (i) => i.id !== invoice.id && i.nr && String(i.nr).startsWith(prefix + "-") && seqOf(i.nr) > mine
-  );
-}
-
 // --------------------------------------------------------------- kiirmüük
 
 // The server allocates the real number when the sale is finished; this is the
@@ -489,23 +474,18 @@ export function viewInvoices(actions) {
   }
 
   if (selected && !isDraft(selected) && isOwner()) {
-    if (isCancelled(selected)) {
-      acts.push(
-        h("button", { class: "btng", type: "button",
-                      onclick: () => actions.uncancelInvoice(selected) }, "Võta tühistamine tagasi"),
-        // Only offered when it can be done without leaving a hole: the invoice
-        // is cancelled and holds the last number of its month.
-        isLastOfMonth(selected)
-          ? h("button", { class: "btng", type: "button",
-                          onclick: () => actions.purgeInvoice(selected) }, "Kustuta jäädavalt")
-          : null
-      );
-    } else {
-      acts.push(
-        h("button", { class: "btng", type: "button",
-                      onclick: () => actions.cancelInvoice(selected) }, "Tühista arve")
-      );
-    }
+    acts.push(
+      isCancelled(selected)
+        ? h("button", { class: "btng", type: "button",
+                        onclick: () => actions.uncancelInvoice(selected) }, "Võta tühistamine tagasi")
+        : h("button", { class: "btng", type: "button",
+                        onclick: () => actions.cancelInvoice(selected) }, "Tühista arve"),
+      // The owner's delete. Offered on any issued invoice, cancelled or not —
+      // the warning about the gap it may leave belongs in the confirmation,
+      // not in a button that quietly refuses to appear.
+      h("button", { class: "btng", type: "button",
+                    onclick: () => actions.purgeInvoice(selected) }, "Kustuta jäädavalt")
+    );
   }
 
   acts.push(h("button", { class: "btnp", type: "button", onclick: () => actions.goto("pos") }, "+ Uus müük"));
