@@ -88,16 +88,21 @@ const blankLine = (l) => ({
 
 export function addLine(line) {
   // Clicking the same tile twice bumps the quantity rather than stacking
-  // duplicate rows — how a till is actually used. But two rows that differ in
-  // price, discount or description are deliberately different rows: that is
-  // what a consolidated invoice is made of, so those are never merged.
+  // duplicate rows — how a till is actually used.
+  //
+  // The description is part of what makes two rows the same. That is what
+  // keeps a week's consolidated invoice readable: one barber's haircuts stack
+  // into a single line, but a second barber's haircuts carry a different
+  // description and stay a line of their own, at their own price. Two rows
+  // that differ in price or discount are likewise deliberately separate.
+  const note = line.note || "";
   const existing = S.draft.lines.find(
     (l) =>
       l.productId === (line.productId == null ? null : line.productId) &&
       l.name === line.name &&
+      (l.note || "") === note &&
       Number(l.price) === (Number(line.price) || 0) &&
-      Number(l.discount) === 0 &&
-      !l.note
+      Number(l.discount) === 0
   );
   if (existing) existing.qty += 1;
   else S.draft.lines.push(blankLine(line));

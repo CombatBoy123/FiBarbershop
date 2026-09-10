@@ -135,15 +135,38 @@
   var activeId = defaultBarber().id;
   try { var saved = localStorage.getItem(LS); if (saved && byId[saved]) activeId = saved; } catch (e) {}
   function active() { return byId[activeId] || defaultBarber(); }
-  var repriceAllPending = false;
+
+  // The till reads this when it creates a line, so the line records whose work
+  // it was. Optional on both sides: without the add-on the global is simply
+  // absent and the till behaves as it always did.
+  function publishActive() {
+    var b = active();
+    window.fiActiveBarber = {
+      id: b.id,
+      displayName: b.displayName,
+      // This barber's price for a shop service, or null when they do not offer
+      // it. The till uses it to create the line at the right amount in the
+      // first place. Correcting the price after the fact would mean the second
+      // click found a line at a different price and started a new row instead
+      // of adding to the first — the same barber's work has to stack.
+      priceFor: function (serviceName) {
+        var svc = barberServiceForCategory(b, category(serviceName));
+        return svc ? priceAmount(svc.price) : null;
+      },
+    };
+  }
 
   function setActive(id) {
     if (!byId[id] || id === activeId) return;
     activeId = id;
     try { localStorage.setItem(LS, id); } catch (e) {}
-    // Bring the open draft onto the new barber's prices, so nothing entered
-    // under the previous profile can reach the invoice at the wrong price.
-    repriceAllPending = true;
+    // Switching profiles changes the tiles — their prices, and which of them
+    // are struck out — and nothing else. Lines already rung up stay exactly as
+    // they are, at the price they were sold at, because that is what actually
+    // happened at the chair. A week's consolidated invoice is built by moving
+    // between barbers, so a switch that rewrote or dropped earlier lines would
+    // destroy the very thing it is used for.
+    publishActive();
     updateLabel();
     apply();
   }
@@ -344,16 +367,10 @@
       else if (tile.title && tile.title.indexOf("ei paku") >= 0) tile.removeAttribute("title");
     });
 
-    // Reprice a freshly added draft line to this barber's price. On first entry
-    // to the screen we only take the baseline count, so existing lines and
-    // hand-typed prices are never overwritten — only genuinely new lines are.
-    // A profile switch must not leave the previous barber's prices sitting in
-    // the draft, so the whole draft is brought onto the new barber first.
-    if (repriceAllPending) {
-      repriceAllPending = false;
-      syncDraftToBarber(view, b, serviceNames);
-    }
-
+    // Reprice a freshly added draft line to this barber's price. Only ever a
+    // genuinely new line: existing lines and hand-typed prices are never
+    // touched, and neither is anything already in the draft when the profile
+    // changes.
     var dlines = draftLines(view);
     var count = dlines.length;
     if (!posActive) {
@@ -394,47 +411,6 @@
     return true;
   }
 
-  // Called when the profile changes: put the new barber's price on every
-  // service line, and drop the lines for treatments this barber does not do
-  // (there is no price to move them to, and they do not belong on this
-  // barber's invoice). Products, the welcome drink, the manual line, the
-  // buyer, the tip and the payment are all left alone.
-  function syncDraftToBarber(view, b, serviceNames) {
-    var removed = 0, repriced = 0;
-
-    // Each removal re-renders the draft, so re-query after every click rather
-    // than iterating over node references that are about to go stale.
-    for (var guard = 0; guard < 50; guard++) {
-      var target = null;
-      var lines = draftLines(view);
-      for (var i = 0; i < lines.length && !target; i++) {
-        var nameEl = lines[i].querySelector(".tr");
-        if (!nameEl) continue;
-        var nm = nameEl.textContent.trim();
-        if (!serviceNames[nm]) continue;                 // a product: leave it
-        var cat = category(nm);
-        if (!cat || !STRIKEABLE[cat]) continue;          // haircut/drink/manual
-        if (barberServiceForCategory(b, cat)) continue;  // this barber does it
-        target = lines[i];
-      }
-      if (!target) break;
-      var del = target.querySelector(".del");
-      if (!del) break;
-      del.click();
-      removed++;
-    }
-
-    draftLines(view).forEach(function (line) {
-      if (repriceLine(line, b, serviceNames)) repriced++;
-    });
-
-    if (removed) {
-      toast(b.displayName + " — " + removed + " teenust eemaldatud (ei paku)");
-    } else if (repriced) {
-      toast("Hinnad uuendatud: " + b.displayName);
-    }
-  }
-
   // Mirrors the till's own toast, so a silent price change on an open invoice
   // is always visible to whoever is at the counter.
   var toastTimer = null;
@@ -468,6 +444,7 @@
 
   function boot() {
     injectStyles();
+    publishActive();
     apply();
     // The app rebuilds #view and toggles #app on login; re-apply on any change.
     obs = new MutationObserver(apply);

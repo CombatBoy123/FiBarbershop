@@ -128,6 +128,29 @@ export function viewDash(actions) {
 const lineSummary = (invoice) =>
   (invoice.lines || []).map((l) => l.name).join(", ").slice(0, 60) || invoice.buyer_name;
 
+// The barber the picker add-on currently has selected, or null when the add-on
+// is not loaded. Read defensively and never required: the till is complete
+// without it, and this is the only place the two know about each other.
+function activeBarber() {
+  const b = typeof window !== "undefined" && window.fiActiveBarber;
+  return b && b.displayName ? b : null;
+}
+
+// One tap on a service tile, as the line it becomes. The barber's own price
+// and name go on at creation: the price so the same barber's second haircut
+// adds to the first row instead of starting another, the name so a second
+// barber's haircuts stay a row of their own on a consolidated invoice.
+function serviceLine(service) {
+  const barber = activeBarber();
+  const barberPrice = barber && barber.priceFor ? barber.priceFor(service.name) : null;
+  return {
+    serviceId: service.id,
+    name: service.name,
+    price: barberPrice == null ? Number(service.price) : Number(barberPrice),
+    note: barber ? barber.displayName : "",
+  };
+}
+
 // --------------------------------------------------------------- kiirmüük
 
 // The server allocates the real number when the sale is finished; this is the
@@ -155,7 +178,7 @@ export function viewPos(actions) {
       // serviceId travels with the line so a report can count haircuts later
       // and a customer's agreed price knows which service it applies to. The
       // name and price are still copied onto the invoice, never referenced.
-      onclick: () => actions.addLine({ serviceId: s.id, name: s.name, price: Number(s.price) }),
+      onclick: () => actions.addLine(serviceLine(s)),
     },
       h("span", { class: "svcn", text: s.name }),
       h("span", { class: "svcp", text: eur(s.price) }),
