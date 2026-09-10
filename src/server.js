@@ -9,7 +9,9 @@ const express = require("express");
 const cors = require("cors");
 
 const { query, withTransaction, cents, euros } = require("./db");
-const { hashPassword, verifyPassword, signToken, requireAuth } = require("./auth");
+const {
+  ROLES, hashPassword, verifyPassword, signToken, requireAuth, requireRole,
+} = require("./auth");
 const { seedDefaults } = require("./seed");
 
 const app = express();
@@ -80,6 +82,147 @@ function addDays(dateStr, days) {
 // instead of an unhandled rejection that silently kills the request.
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
+// Shorthand for the routes only the owner may reach: the shape of the books —
+// price list, settings, cash book, stock, and voiding an issued invoice.
+// Ringing up a sale is deliberately not on this list.
+const ownerOnly = [requireAuth, requireRole("omanik")];
+
+// ------------------------------------------------------------ invoice lines
+
+const UNITS = ["tk", "h", "kord", "km", "päev"];
+
+// One line as the server will store it. Every field is taken from the request
+// and written onto the invoice as a copy — the price list is read to offer a
+// price, never to decide one. That is what lets a barber charge 40 € on one
+// invoice without moving the 35 € everyone else pays.
+function normaliseLines(raw) {
+  const rawLines = Array.isArray(raw) ? raw : [];
+  if (!rawLines.length) throw Object.assign(new Error("Arvel pole ühtegi rida."), { status: 400 });
+  if (rawLines.length > 100) throw Object.assign(new Error("Liiga palju ridu."), { status: 400 });
+
+  return rawLines.map((l) => {
+    const line = {
+      productId: l.productId ? Number(l.productId) : null,
+      serviceId: l.serviceId ? Number(l.serviceId) : null,
+      name: String(l.name || "").trim().slice(0, 200),
+      note: String(l.note || "").trim().slice(0, 300),
+      unit: UNITS.includes(String(l.unit)) ? String(l.unit) : "tk",
+      qty: num(l.qty, 1),
+      price: num(l.price, 0),
+      discount: num(l.discount, 0),
+    };
+    if (!line.name) throw Object.assign(new Error("Real puudub nimi."), { status: 400 });
+    if (!(line.qty > 0) || line.qty > 100000) {
+      throw Object.assign(new Error("Vigane kogus real: " + line.name), { status: 400 });
+    }
+    if (line.price < 0 || line.price > MAX_MONEY) {
+      throw Object.assign(new Error("Vigane hind real: " + line.name), { status: 400 });
+    }
+    if (line.discount < 0 || line.discount > 100) {
+      throw Object.assign(new Error("Allahindlus peab olema 0–100% real: " + line.name), { status: 400 });
+    }
+    return line;
+  });
+}
+
+// `price` stays the undiscounted unit price so the invoice can print both the
+// list price and the reduction. The discount belongs in this one formula and
+// nowhere else — a discount added as a negative line would corrupt the VAT base.
+const lineCents = (l) => Math.round(cents(l.price) * l.qty * (1 - l.discount / 100));
+const linesTotalCents = (lines) => lines.reduce((sum, l) => sum + lineCents(l), 0);
+
+// Writes the lines of one invoice, and books a stock movement for every line
+// that came off a shelf. Shared by the till and by issuing a composed invoice.
+async function writeLines(client, shopId, invoiceId, lines, date) {
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i];
+    await client.query(
+      `INSERT INTO invoice_lines
+         (invoice_id, product_id, service_id, name, note, qty, unit, price, discount, sort_order)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+      [invoiceId, l.productId, l.serviceId, l.name, l.note, l.qty, l.unit, l.price, l.discount, i]
+    );
+    if (l.productId) {
+      await client.query(
+        `INSERT INTO stock_movements (user_id, product_id, move_date, move_type, qty, price, invoice_id)
+         VALUES ($1,$2,$3,'out',$4,$5,$6)`,
+        [shopId, l.productId, date, l.qty, l.price, invoiceId]
+      );
+    }
+  }
+}
+
+// Stock is checked inside the caller's transaction so two tills selling the
+// last jar at once cannot both succeed.
+async function assertStock(client, shopId, lines) {
+  for (const l of lines) {
+    if (!l.productId) continue;
+    const q = await client.query(
+      `SELECT p.name,
+              COALESCE(SUM(CASE WHEN m.move_type = 'in' THEN m.qty ELSE -m.qty END), 0) AS qty
+         FROM products p
+         LEFT JOIN stock_movements m ON m.product_id = p.id
+        WHERE p.id = $2 AND p.user_id = $1
+        GROUP BY p.name`,
+      [shopId, l.productId]
+    );
+    if (!q.rowCount) throw Object.assign(new Error("Toodet ei leitud."), { status: 400 });
+    const have = Number(q.rows[0].qty);
+    if (have < l.qty) {
+      throw Object.assign(
+        new Error(q.rows[0].name + " — laos on " + have + " tk, müüa proovid " + l.qty + " tk."),
+        { status: 409 }
+      );
+    }
+  }
+}
+
+// Mints the next invoice number under the settings row lock, so two tills can
+// never hand out the same one. Format is MMYY-NNN and the counter restarts
+// monthly: a daily reset would mint 0826-001 twice in August.
+// The caller must already hold `settings` FOR UPDATE.
+async function allocateNumber(client, shopId, settings, date) {
+  const month = date.slice(0, 7);
+  const seq = String(settings.invoice_month || "") === month ? settings.invoice_seq + 1 : 1;
+  await client.query(
+    "UPDATE settings SET invoice_month = $2, invoice_seq = $3, invoice_year = $4 WHERE user_id = $1",
+    [shopId, month, seq, Number(date.slice(0, 4))]
+  );
+  const [yyyy, mm] = date.split("-");
+  return mm + yyyy.slice(2) + "-" + String(seq).padStart(3, "0");
+}
+
+// The cash-book entry an invoice produces when the money actually arrives.
+// For the till that is the moment of sale; for a credit invoice it is weeks
+// later, which is exactly why this is a function and not an inline INSERT.
+async function bookIncome(client, shopId, invoice, lines) {
+  const hasProduct = lines.some((l) => l.product_id || l.productId);
+  await client.query(
+    `INSERT INTO ledger_entries (user_id, entry_date, kind, category, description, cash, card, bank, invoice_id)
+     VALUES ($1,$2,'tulu',$3,$4,$5,$6,$7,$8)`,
+    [
+      shopId,
+      String(invoice.paid_date || invoice.invoice_date).slice(0, 10),
+      hasProduct ? "Kaubamüük" : "Teenuste müük",
+      "Arve " + invoice.nr + " · " + invoice.buyer_name,
+      invoice.cash,
+      invoice.card,
+      invoice.bank || 0,
+      invoice.id,
+    ]
+  );
+}
+
+// Every irreversible act leaves a row here. Small table, but it is the only
+// thing that can answer "who cancelled 0926-004, and why".
+async function audit(client, shopId, actorId, action, invoiceId, detail) {
+  await client.query(
+    `INSERT INTO audit_log (shop_id, actor_id, action, invoice_id, detail)
+     VALUES ($1,$2,$3,$4,$5)`,
+    [shopId, actorId, action, invoiceId || null, String(detail || "").slice(0, 300)]
+  );
+}
+
 // ------------------------------------------------------------------- login
 
 // Crude but effective brute-force guard: a handful of failures per email locks
@@ -143,9 +286,13 @@ app.post(
 
     const user = await withTransaction(async (client) => {
       const r = await client.query(
-        "INSERT INTO users (email, password_hash, name) VALUES ($1,$2,$3) RETURNING id, email, name",
+        `INSERT INTO users (email, password_hash, name, role)
+         VALUES ($1,$2,$3,'omanik') RETURNING id, email, name, role`,
         [email, await hashPassword(password), name || null]
       );
+      // Registering creates a shop, so the account is its own shop. A barber
+      // is never created here — the owner adds those under /api/staff.
+      await client.query("UPDATE users SET shop_id = id WHERE id = $1", [r.rows[0].id]);
       await seedDefaults(client, r.rows[0].id);
       return r.rows[0];
     });
@@ -168,14 +315,25 @@ app.post(
     if (loginBlocked(email)) {
       return res.status(429).json({ error: "Liiga palju katseid. Proovi mõne minuti pärast uuesti." });
     }
-    const r = await query("SELECT id, email, name, password_hash FROM users WHERE email = $1", [email]);
+    const r = await query(
+      "SELECT id, email, name, password_hash, role, active FROM users WHERE email = $1",
+      [email]
+    );
     const user = r.rows[0];
     if (!user || !(await verifyPassword(password, user.password_hash))) {
       noteFailure(email);
       return res.status(401).json({ error: "Vale e-post või parool." });
     }
+    // A closed account fails here rather than at the first API call, so the
+    // person is told why instead of watching an empty till load.
+    if (!user.active) {
+      return res.status(403).json({ error: "See konto on suletud. Võta ühendust salongi omanikuga." });
+    }
     failures.delete(email);
-    res.json({ token: signToken(user), user: { id: user.id, email: user.email, name: user.name } });
+    res.json({
+      token: signToken(user),
+      user: { id: user.id, email: user.email, name: user.name, role: user.role },
+    });
   })
 );
 
@@ -183,7 +341,7 @@ app.get(
   "/api/me",
   requireAuth,
   wrap(async (req, res) => {
-    const r = await query("SELECT id, email, name FROM users WHERE id = $1", [req.userId]);
+    const r = await query("SELECT id, email, name, role FROM users WHERE id = $1", [req.userId]);
     if (!r.rowCount) return res.status(401).json({ error: "Palun logi sisse." });
     res.json({ user: r.rows[0] });
   })
@@ -195,30 +353,65 @@ app.get(
 // computed stock, invoices with lines, the cash book and every movement.
 // A barbershop's yearly volume is small enough that paging would be pure
 // ceremony — if this ever gets slow, page `invoices` first.
-async function loadState(userId) {
-  const [settings, services, products, stock, invoices, lines, ledger, moves] = await Promise.all([
-    query("SELECT * FROM settings WHERE user_id = $1", [userId]),
-    query("SELECT * FROM services WHERE user_id = $1 AND active ORDER BY sort_order, id", [userId]),
-    query("SELECT * FROM products WHERE user_id = $1 AND active ORDER BY sort_order, id", [userId]),
+async function loadState(shopId) {
+  const [
+    settings, services, products, stock, invoices, lines, ledger, moves,
+    staff, customers, custPrices, auditRows,
+  ] = await Promise.all([
+    query("SELECT * FROM settings WHERE user_id = $1", [shopId]),
+    query("SELECT * FROM services WHERE user_id = $1 AND active ORDER BY sort_order, id", [shopId]),
+    query("SELECT * FROM products WHERE user_id = $1 AND active ORDER BY sort_order, id", [shopId]),
     query(
       `SELECT product_id,
               SUM(CASE WHEN move_type = 'in' THEN qty ELSE -qty END) AS qty
          FROM stock_movements WHERE user_id = $1 GROUP BY product_id`,
-      [userId]
+      [shopId]
     ),
-    query("SELECT * FROM invoices WHERE user_id = $1 ORDER BY invoice_date DESC, id DESC", [userId]),
+    // Drafts have no date-ordered place in the sequence yet, so they sort to
+    // the top by id — they are the thing being worked on right now.
+    query(
+      `SELECT i.*, u.name AS created_by_name, u.email AS created_by_email
+         FROM invoices i
+         LEFT JOIN users u ON u.id = i.created_by
+        WHERE i.user_id = $1
+        ORDER BY (i.status = 'mustand') DESC, i.invoice_date DESC, i.id DESC`,
+      [shopId]
+    ),
     query(
       `SELECT l.* FROM invoice_lines l
          JOIN invoices i ON i.id = l.invoice_id
         WHERE i.user_id = $1 ORDER BY l.invoice_id, l.sort_order, l.id`,
-      [userId]
+      [shopId]
     ),
-    query("SELECT * FROM ledger_entries WHERE user_id = $1 ORDER BY entry_date, id", [userId]),
+    query("SELECT * FROM ledger_entries WHERE user_id = $1 ORDER BY entry_date, id", [shopId]),
     query(
       `SELECT m.*, p.name AS product_name FROM stock_movements m
          JOIN products p ON p.id = m.product_id
         WHERE m.user_id = $1 ORDER BY m.move_date DESC, m.id DESC`,
-      [userId]
+      [shopId]
+    ),
+    query(
+      `SELECT id, email, name, role, active, created_at FROM users
+        WHERE shop_id = $1 ORDER BY (role = 'omanik') DESC, name, email`,
+      [shopId]
+    ),
+    query(
+      "SELECT * FROM customers WHERE user_id = $1 AND active ORDER BY name",
+      [shopId]
+    ),
+    query(
+      `SELECT cp.* FROM customer_prices cp
+         JOIN customers c ON c.id = cp.customer_id
+        WHERE c.user_id = $1`,
+      [shopId]
+    ),
+    query(
+      `SELECT a.*, u.name AS actor_name, u.email AS actor_email, i.nr AS invoice_nr
+         FROM audit_log a
+         LEFT JOIN users u ON u.id = a.actor_id
+         LEFT JOIN invoices i ON i.id = a.invoice_id
+        WHERE a.shop_id = $1 ORDER BY a.created_at DESC, a.id DESC LIMIT 100`,
+      [shopId]
     ),
   ]);
 
@@ -228,6 +421,11 @@ async function loadState(userId) {
     if (!linesBy.has(l.invoice_id)) linesBy.set(l.invoice_id, []);
     linesBy.get(l.invoice_id).push(l);
   }
+  const pricesBy = new Map();
+  for (const p of custPrices.rows) {
+    if (!pricesBy.has(p.customer_id)) pricesBy.set(p.customer_id, {});
+    pricesBy.get(p.customer_id)[p.service_id] = Number(p.price);
+  }
 
   return {
     settings: settings.rows[0] || null,
@@ -236,6 +434,9 @@ async function loadState(userId) {
     invoices: invoices.rows.map((i) => ({ ...i, lines: linesBy.get(i.id) || [] })),
     ledger: ledger.rows,
     movements: moves.rows,
+    staff: staff.rows,
+    customers: customers.rows.map((c) => ({ ...c, prices: pricesBy.get(c.id) || {} })),
+    audit: auditRows.rows,
   };
 }
 
@@ -243,7 +444,11 @@ app.get(
   "/api/bootstrap",
   requireAuth,
   wrap(async (req, res) => {
-    res.json(await loadState(req.userId));
+    const state = await loadState(req.shopId);
+    // The client needs to know which buttons to draw. It is not the security
+    // boundary — every gated route checks the role again server-side.
+    state.me = { id: req.userId, email: req.userEmail, name: req.userName, role: req.role };
+    res.json(state);
   })
 );
 
@@ -257,10 +462,10 @@ const SETTING_FIELDS = [
 
 app.put(
   "/api/settings",
-  requireAuth,
+  ownerOnly,
   wrap(async (req, res) => {
     const sets = [];
-    const vals = [req.userId];
+    const vals = [req.shopId];
     for (const f of SETTING_FIELDS) {
       if (!(f in req.body)) continue;
       let v = req.body[f];
@@ -284,7 +489,7 @@ app.put(
 
 app.post(
   "/api/services",
-  requireAuth,
+  ownerOnly,
   wrap(async (req, res) => {
     const name = String(req.body.name || "").trim();
     if (!name) return res.status(400).json({ error: "Teenuse nimi puudub." });
@@ -292,7 +497,7 @@ app.post(
       `INSERT INTO services (user_id, name, price, note, sort_order)
        VALUES ($1,$2,$3,$4,(SELECT COALESCE(MAX(sort_order)+1,0) FROM services WHERE user_id=$1))
        RETURNING *`,
-      [req.userId, name, money(req.body.price), String(req.body.note || "")]
+      [req.shopId, name, money(req.body.price), String(req.body.note || "")]
     );
     res.status(201).json({ service: r.rows[0] });
   })
@@ -300,13 +505,13 @@ app.post(
 
 app.put(
   "/api/services/:id",
-  requireAuth,
+  ownerOnly,
   wrap(async (req, res) => {
     const r = await query(
       `UPDATE services SET name = COALESCE($3, name), price = COALESCE($4, price), note = COALESCE($5, note)
         WHERE id = $2 AND user_id = $1 RETURNING *`,
       [
-        req.userId,
+        req.shopId,
         Number(req.params.id),
         req.body.name === undefined ? null : String(req.body.name),
         req.body.price === undefined ? null : money(req.body.price),
@@ -320,11 +525,11 @@ app.put(
 
 app.delete(
   "/api/services/:id",
-  requireAuth,
+  ownerOnly,
   wrap(async (req, res) => {
     // Soft delete: past invoices keep the name they were sold under.
     const r = await query("UPDATE services SET active = false WHERE id = $2 AND user_id = $1 RETURNING id", [
-      req.userId,
+      req.shopId,
       Number(req.params.id),
     ]);
     if (!r.rowCount) return res.status(404).json({ error: "Teenust ei leitud." });
@@ -334,7 +539,7 @@ app.delete(
 
 app.post(
   "/api/products",
-  requireAuth,
+  ownerOnly,
   wrap(async (req, res) => {
     const name = String(req.body.name || "").trim();
     if (!name) return res.status(400).json({ error: "Toote nimi puudub." });
@@ -342,7 +547,7 @@ app.post(
       `INSERT INTO products (user_id, name, cost, price, image_url, sort_order)
        VALUES ($1,$2,$3,$4,$5,(SELECT COALESCE(MAX(sort_order)+1,0) FROM products WHERE user_id=$1))
        RETURNING *`,
-      [req.userId, name, money(req.body.cost), money(req.body.price), String(req.body.image_url || "")]
+      [req.shopId, name, money(req.body.cost), money(req.body.price), String(req.body.image_url || "")]
     );
     res.status(201).json({ product: { ...r.rows[0], stock: 0 } });
   })
@@ -350,14 +555,14 @@ app.post(
 
 app.put(
   "/api/products/:id",
-  requireAuth,
+  ownerOnly,
   wrap(async (req, res) => {
     const r = await query(
       `UPDATE products SET name = COALESCE($3, name), cost = COALESCE($4, cost),
               price = COALESCE($5, price), image_url = COALESCE($6, image_url)
         WHERE id = $2 AND user_id = $1 RETURNING *`,
       [
-        req.userId,
+        req.shopId,
         Number(req.params.id),
         req.body.name === undefined ? null : String(req.body.name),
         req.body.cost === undefined ? null : money(req.body.cost),
@@ -375,7 +580,7 @@ app.put(
 // difference as one correcting movement and leaves the history intact.
 app.put(
   "/api/products/:id/stock",
-  requireAuth,
+  ownerOnly,
   wrap(async (req, res) => {
     const productId = Number(req.params.id);
     const target = num(req.body.qty, -1);
@@ -386,14 +591,14 @@ app.put(
       // Locking the product serialises two tills correcting the same item.
       const p = await client.query(
         "SELECT id, cost FROM products WHERE id = $2 AND user_id = $1 FOR UPDATE",
-        [req.userId, productId]
+        [req.shopId, productId]
       );
       if (!p.rowCount) throw Object.assign(new Error("Toodet ei leitud."), { status: 404 });
 
       const cur = await client.query(
         `SELECT COALESCE(SUM(CASE WHEN move_type = 'in' THEN qty ELSE -qty END), 0) AS qty
            FROM stock_movements WHERE user_id = $1 AND product_id = $2`,
-        [req.userId, productId]
+        [req.shopId, productId]
       );
       const diff = target - Number(cur.rows[0].qty);
       if (diff === 0) return 0;
@@ -401,21 +606,21 @@ app.put(
       await client.query(
         `INSERT INTO stock_movements (user_id, product_id, move_date, move_type, qty, price)
          VALUES ($1,$2,$3,$4,$5,$6)`,
-        [req.userId, productId, date, diff > 0 ? "in" : "out", Math.abs(diff), Number(p.rows[0].cost) || 0]
+        [req.shopId, productId, date, diff > 0 ? "in" : "out", Math.abs(diff), Number(p.rows[0].cost) || 0]
       );
       return diff;
     });
 
-    res.json({ delta, state: await loadState(req.userId) });
+    res.json({ delta, state: await loadState(req.shopId) });
   })
 );
 
 app.delete(
   "/api/products/:id",
-  requireAuth,
+  ownerOnly,
   wrap(async (req, res) => {
     const r = await query("UPDATE products SET active = false WHERE id = $2 AND user_id = $1 RETURNING id", [
-      req.userId,
+      req.shopId,
       Number(req.params.id),
     ]);
     if (!r.rowCount) return res.status(404).json({ error: "Toodet ei leitud." });
@@ -434,31 +639,18 @@ app.post(
   wrap(async (req, res) => {
     const body = req.body || {};
     const date = isDate(body.date) ? body.date : today();
-    const rawLines = Array.isArray(body.lines) ? body.lines : [];
-    if (!rawLines.length) return res.status(400).json({ error: "Arvel pole ühtegi rida." });
-    if (rawLines.length > 100) return res.status(400).json({ error: "Liiga palju ridu." });
-
-    const lines = rawLines.map((l) => ({
-      productId: l.productId ? Number(l.productId) : null,
-      name: String(l.name || "").trim().slice(0, 200),
-      qty: num(l.qty, 1),
-      price: num(l.price, 0),
-    }));
-    for (const l of lines) {
-      if (!l.name) return res.status(400).json({ error: "Real puudub nimi." });
-      if (!(l.qty > 0) || l.qty > 100000) return res.status(400).json({ error: "Vigane kogus real: " + l.name });
-      if (l.price < 0 || l.price > MAX_MONEY) return res.status(400).json({ error: "Vigane hind real: " + l.name });
-    }
+    const lines = normaliseLines(body.lines);
 
     // Optional: the till fills these in only when the invoice has to be made
     // out to a named person or company.
     const buyerName = String(body.buyerName || "").trim().slice(0, 200);
     const buyerDetails = String(body.buyerDetails || "").trim().slice(0, 500);
+    const customerId = body.customerId ? Number(body.customerId) : null;
 
     // Totals are recomputed here from the lines. The client's own total is
     // never trusted — it is a display value, not an input.
     const tip = Math.max(0, num(body.tip));
-    const linesCents = lines.reduce((sum, l) => sum + Math.round(cents(l.price) * l.qty), 0);
+    const linesCents = linesTotalCents(lines);
     const totalCents = linesCents + cents(tip);
     const paidCents = cents(body.cash) + cents(body.card);
     if (paidCents !== totalCents) {
@@ -475,44 +667,12 @@ app.post(
     const result = await withTransaction(async (client) => {
       // Lock the settings row: this both serialises invoice numbering and
       // gives us the VAT rate that was in force at the moment of the sale.
-      const s = await client.query("SELECT * FROM settings WHERE user_id = $1 FOR UPDATE", [req.userId]);
+      const s = await client.query("SELECT * FROM settings WHERE user_id = $1 FOR UPDATE", [req.shopId]);
       const settings = s.rows[0];
       if (!settings) throw Object.assign(new Error("Seaded puuduvad."), { status: 400 });
 
-      // Format is MMYY-NNN, so the number identifies a month, not a day.
-      // The counter therefore restarts monthly: resetting it daily would mint
-      // 0826-001 twice in August and collide with UNIQUE(user_id, nr).
-      const month = date.slice(0, 7);
-      const seq = String(settings.invoice_month || "") === month ? settings.invoice_seq + 1 : 1;
-      await client.query(
-        "UPDATE settings SET invoice_month = $2, invoice_seq = $3, invoice_year = $4 WHERE user_id = $1",
-        [req.userId, month, seq, Number(date.slice(0, 4))]
-      );
-      const [yyyy, mm] = date.split("-");
-      const nr = mm + yyyy.slice(2) + "-" + String(seq).padStart(3, "0");
-
-      // Stock is checked inside the transaction so two tills selling the last
-      // jar at once cannot both succeed.
-      for (const l of lines) {
-        if (!l.productId) continue;
-        const q = await client.query(
-          `SELECT p.name,
-                  COALESCE(SUM(CASE WHEN m.move_type = 'in' THEN m.qty ELSE -m.qty END), 0) AS qty
-             FROM products p
-             LEFT JOIN stock_movements m ON m.product_id = p.id
-            WHERE p.id = $2 AND p.user_id = $1
-            GROUP BY p.name`,
-          [req.userId, l.productId]
-        );
-        if (!q.rowCount) throw Object.assign(new Error("Toodet ei leitud."), { status: 400 });
-        const have = Number(q.rows[0].qty);
-        if (have < l.qty) {
-          throw Object.assign(
-            new Error(q.rows[0].name + " — laos on " + have + " tk, müüa proovid " + l.qty + " tk."),
-            { status: 409 }
-          );
-        }
-      }
+      const nr = await allocateNumber(client, req.shopId, settings, date);
+      await assertStock(client, req.shopId, lines);
 
       // Prices include VAT; the tip is outside the VAT base.
       const rate = Number(settings.vat_rate) || 0;
@@ -521,11 +681,11 @@ app.post(
 
       const inv = await client.query(
         `INSERT INTO invoices
-           (user_id, nr, invoice_date, due_date, buyer_name, buyer_details,
-            net, vat, vat_rate, tip, total, cash, card)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
+           (user_id, nr, invoice_date, due_date, buyer_name, buyer_details, customer_id,
+            net, vat, vat_rate, tip, total, cash, card, status, paid_at, created_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'makstud',now(),$15) RETURNING *`,
         [
-          req.userId,
+          req.shopId,
           nr,
           date,
           addDays(date, settings.payment_days),
@@ -534,6 +694,7 @@ app.post(
           // till has been given a name, an empty details line stays empty
           // rather than telling a company how its own invoice was paid.
           buyerDetails || (buyerName ? "" : "Sularaha-/kaardimüük salongis"),
+          customerId,
           euros(netCents),
           euros(vatCents),
           rate,
@@ -541,45 +702,304 @@ app.post(
           euros(totalCents),
           euros(cents(body.cash)),
           euros(cents(body.card)),
+          req.userId,
         ]
       );
       const invoice = inv.rows[0];
 
-      for (let i = 0; i < lines.length; i++) {
-        const l = lines[i];
-        await client.query(
-          `INSERT INTO invoice_lines (invoice_id, product_id, name, qty, unit, price, sort_order)
-           VALUES ($1,$2,$3,$4,'tk',$5,$6)`,
-          [invoice.id, l.productId, l.name, l.qty, l.price, i]
-        );
-        if (l.productId) {
-          await client.query(
-            `INSERT INTO stock_movements (user_id, product_id, move_date, move_type, qty, price, invoice_id)
-             VALUES ($1,$2,$3,'out',$4,$5,$6)`,
-            [req.userId, l.productId, date, l.qty, l.price, invoice.id]
-          );
-        }
-      }
-
-      const hasProduct = lines.some((l) => l.productId);
-      await client.query(
-        `INSERT INTO ledger_entries (user_id, entry_date, kind, category, description, cash, card, invoice_id)
-         VALUES ($1,$2,'tulu',$3,$4,$5,$6,$7)`,
-        [
-          req.userId,
-          date,
-          hasProduct ? "Kaubamüük" : "Teenuste müük",
-          "Arve " + nr + " · " + invoice.buyer_name,
-          invoice.cash,
-          invoice.card,
-          invoice.id,
-        ]
-      );
+      await writeLines(client, req.shopId, invoice.id, lines, date);
+      await bookIncome(client, req.shopId, invoice, lines);
 
       return invoice;
     });
 
-    res.status(201).json({ invoice: result, state: await loadState(req.userId) });
+    res.status(201).json({ invoice: result, state: await loadState(req.shopId) });
+  })
+);
+
+// ------------------------------------------------------- composed invoices
+
+// The till above is one flow: everything happens at once and the money is
+// already in the drawer. This is the other flow — an invoice put together over
+// a week and paid later by transfer. Same tables, same numbering, separate
+// endpoints, so nothing here can slow down or break the till.
+
+// Recompute an invoice's stored totals from its own lines. Kept as a function
+// because a draft is edited repeatedly and every edit has to leave the header
+// figures agreeing with the rows underneath.
+async function retotal(client, shopId, invoiceId, lines, tip) {
+  const s = await client.query("SELECT vat_rate FROM settings WHERE user_id = $1", [shopId]);
+  const rate = Number(s.rows[0] && s.rows[0].vat_rate) || 0;
+  const linesCents = linesTotalCents(lines);
+  const totalCents = linesCents + cents(tip);
+  const netCents = rate > 0 ? Math.round(linesCents / (1 + rate / 100)) : linesCents;
+  return {
+    rate,
+    net: euros(netCents),
+    vat: euros(linesCents - netCents),
+    total: euros(totalCents),
+    totalCents,
+  };
+}
+
+// Fetch one invoice belonging to this shop, or throw. Every route below starts
+// here, which is what keeps one shop out of another's books.
+async function getInvoice(client, shopId, id, forUpdate = false) {
+  const r = await client.query(
+    "SELECT * FROM invoices WHERE id = $2 AND user_id = $1" + (forUpdate ? " FOR UPDATE" : ""),
+    [shopId, id]
+  );
+  if (!r.rowCount) throw Object.assign(new Error("Arvet ei leitud."), { status: 404 });
+  return r.rows[0];
+}
+
+// Create a draft. No number is minted and no stock moves: a draft is not yet
+// a document, which is precisely why deleting one is harmless.
+app.post(
+  "/api/invoices",
+  requireAuth,
+  wrap(async (req, res) => {
+    const body = req.body || {};
+    const date = isDate(body.date) ? body.date : today();
+    const lines = normaliseLines(body.lines);
+    const tip = Math.max(0, num(body.tip));
+
+    const invoice = await withTransaction(async (client) => {
+      const s = await client.query("SELECT payment_days FROM settings WHERE user_id = $1", [req.shopId]);
+      const days = Number(s.rows[0] && s.rows[0].payment_days) || 14;
+      const t = await retotal(client, req.shopId, null, lines, tip);
+
+      const inv = await client.query(
+        `INSERT INTO invoices
+           (user_id, nr, invoice_date, due_date, buyer_name, buyer_details, customer_id,
+            net, vat, vat_rate, tip, total, status, created_by)
+         VALUES ($1,'',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'mustand',$12) RETURNING *`,
+        [
+          req.shopId,
+          date,
+          addDays(date, days),
+          String(body.buyerName || "").trim().slice(0, 200) || "Eraklient",
+          String(body.buyerDetails || "").trim().slice(0, 500),
+          body.customerId ? Number(body.customerId) : null,
+          t.net, t.vat, t.rate, tip, t.total,
+          req.userId,
+        ]
+      );
+      await writeLines(client, req.shopId, inv.rows[0].id, lines, date);
+      return inv.rows[0];
+    });
+
+    res.status(201).json({ invoice, state: await loadState(req.shopId) });
+  })
+);
+
+// Replace a draft's contents. Only a draft: once a number is on a document it
+// is no longer ours to rewrite.
+app.put(
+  "/api/invoices/:id",
+  requireAuth,
+  wrap(async (req, res) => {
+    const id = Number(req.params.id);
+    const body = req.body || {};
+    const lines = normaliseLines(body.lines);
+    const tip = Math.max(0, num(body.tip));
+
+    const invoice = await withTransaction(async (client) => {
+      const cur = await getInvoice(client, req.shopId, id, true);
+      if (cur.status !== "mustand") {
+        throw Object.assign(
+          new Error("Ainult mustandit saab muuta. Esitatud arve tuleb tühistada ja uus koostada."),
+          { status: 409 }
+        );
+      }
+      const date = isDate(body.date) ? body.date : String(cur.invoice_date).slice(0, 10);
+      const t = await retotal(client, req.shopId, id, lines, tip);
+
+      await client.query("DELETE FROM invoice_lines WHERE invoice_id = $1", [id]);
+      await writeLines(client, req.shopId, id, lines, date);
+
+      const r = await client.query(
+        `UPDATE invoices SET invoice_date = $3, buyer_name = $4, buyer_details = $5,
+                customer_id = $6, net = $7, vat = $8, vat_rate = $9, tip = $10, total = $11
+          WHERE id = $2 AND user_id = $1 RETURNING *`,
+        [
+          req.shopId, id, date,
+          String(body.buyerName || "").trim().slice(0, 200) || "Eraklient",
+          String(body.buyerDetails || "").trim().slice(0, 500),
+          body.customerId ? Number(body.customerId) : null,
+          t.net, t.vat, t.rate, tip, t.total,
+        ]
+      );
+      return r.rows[0];
+    });
+
+    res.json({ invoice, state: await loadState(req.shopId) });
+  })
+);
+
+// Issue a draft: this is the moment it becomes a document. The number is
+// minted, the goods leave the shelf, and either the money is taken now or the
+// invoice goes out on credit with a due date.
+app.post(
+  "/api/invoices/:id/issue",
+  requireAuth,
+  wrap(async (req, res) => {
+    const id = Number(req.params.id);
+    const body = req.body || {};
+    const payNow = body.payNow !== false;
+
+    const invoice = await withTransaction(async (client) => {
+      const cur = await getInvoice(client, req.shopId, id, true);
+      if (cur.status !== "mustand") {
+        throw Object.assign(new Error("See arve on juba esitatud."), { status: 409 });
+      }
+
+      const lr = await client.query(
+        "SELECT * FROM invoice_lines WHERE invoice_id = $1 ORDER BY sort_order, id",
+        [id]
+      );
+      if (!lr.rowCount) throw Object.assign(new Error("Arvel pole ühtegi rida."), { status: 400 });
+      const lines = lr.rows.map((l) => ({
+        productId: l.product_id,
+        qty: Number(l.qty),
+        price: Number(l.price),
+        discount: Number(l.discount),
+      }));
+
+      // An invoice is dated the day it is issued, not the day the draft was
+      // started — otherwise a draft opened on Monday and issued on Friday
+      // would carry Monday's date and, worse, Monday's month in its number.
+      const date = isDate(body.date) ? body.date : today();
+      const totalCents = cents(cur.total);
+
+      // Paying now must balance exactly, same rule as the till. Paying later
+      // means nothing is entered — and, crucially, no cash-book entry is
+      // written, because no money has arrived.
+      let cash = 0, card = 0, bank = 0;
+      if (payNow) {
+        cash = Math.max(0, num(body.cash));
+        card = Math.max(0, num(body.card));
+        if (cents(cash) + cents(card) !== totalCents) {
+          throw Object.assign(
+            new Error(
+              "Makse ei klapi: tasuda " + euros(totalCents).toFixed(2) +
+              " €, sisestatud " + euros(cents(cash) + cents(card)).toFixed(2) + " €."
+            ),
+            { status: 400 }
+          );
+        }
+      }
+
+      const s = await client.query("SELECT * FROM settings WHERE user_id = $1 FOR UPDATE", [req.shopId]);
+      const settings = s.rows[0];
+      if (!settings) throw Object.assign(new Error("Seaded puuduvad."), { status: 400 });
+
+      const nr = await allocateNumber(client, req.shopId, settings, date);
+      await assertStock(client, req.shopId, lines);
+
+      // The goods leave the shelf now, not when the draft was written.
+      for (const l of lines) {
+        if (!l.productId) continue;
+        await client.query(
+          `INSERT INTO stock_movements (user_id, product_id, move_date, move_type, qty, price, invoice_id)
+           VALUES ($1,$2,$3,'out',$4,$5,$6)`,
+          [req.shopId, l.productId, date, l.qty, l.price, id]
+        );
+      }
+
+      const r = await client.query(
+        `UPDATE invoices SET nr = $3, status = $4, cash = $5, card = $6, bank = $7,
+                invoice_date = $8, due_date = $9,
+                paid_at = CASE WHEN $4 = 'makstud' THEN now() ELSE NULL END
+          WHERE id = $2 AND user_id = $1 RETURNING *`,
+        [
+          req.shopId, id, nr, payNow ? "makstud" : "esitatud", cash, card, bank,
+          date, addDays(date, Number(settings.payment_days) || 14),
+        ]
+      );
+      const inv = r.rows[0];
+
+      if (payNow) await bookIncome(client, req.shopId, inv, lr.rows);
+      await audit(client, req.shopId, req.userId, payNow ? "arve esitatud ja makstud" : "arve esitatud", id, nr);
+      return inv;
+    });
+
+    res.json({ invoice, state: await loadState(req.shopId) });
+  })
+);
+
+// The money arrived. This is where a credit invoice finally reaches the cash
+// book — weeks after it was issued, which is the whole reason the cash-book
+// entry is not written at issue time.
+app.post(
+  "/api/invoices/:id/pay",
+  ownerOnly,
+  wrap(async (req, res) => {
+    const id = Number(req.params.id);
+    const body = req.body || {};
+    const paidDate = isDate(body.date) ? body.date : today();
+
+    const invoice = await withTransaction(async (client) => {
+      const cur = await getInvoice(client, req.shopId, id, true);
+      if (cur.status === "tühistatud") {
+        throw Object.assign(new Error("Tühistatud arvet ei saa makstuks märkida."), { status: 409 });
+      }
+      if (cur.status === "mustand") {
+        throw Object.assign(new Error("Mustand tuleb enne esitada."), { status: 409 });
+      }
+      if (cur.status === "makstud") {
+        throw Object.assign(new Error("See arve on juba makstud."), { status: 409 });
+      }
+
+      const totalCents = cents(cur.total);
+      const cash = Math.max(0, num(body.cash));
+      const card = Math.max(0, num(body.card));
+      // Default: the whole sum came in by transfer, which is what a credit
+      // invoice normally means.
+      const bank = body.bank === undefined ? euros(totalCents - cents(cash) - cents(card)) : Math.max(0, num(body.bank));
+      if (cents(cash) + cents(card) + cents(bank) !== totalCents) {
+        throw Object.assign(
+          new Error("Makse ei klapi: tasuda " + euros(totalCents).toFixed(2) + " €."),
+          { status: 400 }
+        );
+      }
+
+      const r = await client.query(
+        `UPDATE invoices SET status = 'makstud', paid_at = now(), cash = $3, card = $4, bank = $5
+          WHERE id = $2 AND user_id = $1 RETURNING *`,
+        [req.shopId, id, cash, card, bank]
+      );
+      const inv = r.rows[0];
+
+      const lr = await client.query("SELECT * FROM invoice_lines WHERE invoice_id = $1", [id]);
+      await bookIncome(client, req.shopId, { ...inv, paid_date: paidDate }, lr.rows);
+      await audit(client, req.shopId, req.userId, "arve makstud", id, inv.nr);
+      return inv;
+    });
+
+    res.json({ invoice, state: await loadState(req.shopId) });
+  })
+);
+
+// Delete a DRAFT. Not a document, no number, nothing booked — so anyone may
+// throw one away and nothing in the accounts notices. An issued invoice is
+// refused here on purpose: that is what cancelling is for.
+app.delete(
+  "/api/invoices/:id",
+  requireAuth,
+  wrap(async (req, res) => {
+    const id = Number(req.params.id);
+    await withTransaction(async (client) => {
+      const cur = await getInvoice(client, req.shopId, id, true);
+      if (cur.status !== "mustand") {
+        throw Object.assign(
+          new Error("Esitatud arvet ei saa kustutada — number peab numbrireas alles jääma. Kasuta tühistamist."),
+          { status: 409 }
+        );
+      }
+      await client.query("DELETE FROM invoices WHERE id = $2 AND user_id = $1", [req.shopId, id]);
+    });
+    res.json({ ok: true, state: await loadState(req.shopId) });
   })
 );
 
@@ -592,30 +1012,268 @@ app.post(
 // cancellation itself lives on the invoice.
 app.post(
   "/api/invoices/:id/cancel",
-  requireAuth,
+  ownerOnly,
   wrap(async (req, res) => {
     const id = Number(req.params.id);
-    const reason = String(req.body.reason || "").slice(0, 300);
+    // The reason is required, not optional. The old prompt() defaulted to an
+    // empty string, so one stray Enter voided an invoice and left nothing
+    // behind to explain it.
+    const reason = String(req.body.reason || "").trim().slice(0, 300);
+    if (!reason) {
+      return res.status(400).json({ error: "Tühistamiseks on põhjus kohustuslik." });
+    }
 
     await withTransaction(async (client) => {
-      const inv = await client.query(
-        "SELECT id, nr, cancelled_at FROM invoices WHERE id = $2 AND user_id = $1 FOR UPDATE",
-        [req.userId, id]
-      );
-      if (!inv.rowCount) throw Object.assign(new Error("Arvet ei leitud."), { status: 404 });
-      if (inv.rows[0].cancelled_at) {
+      const inv = await getInvoice(client, req.shopId, id, true);
+      if (inv.status === "mustand") {
+        throw Object.assign(
+          new Error("Mustandit ei tühistata — selle saab lihtsalt kustutada."),
+          { status: 409 }
+        );
+      }
+      if (inv.cancelled_at) {
         throw Object.assign(new Error("See arve on juba tühistatud."), { status: 409 });
       }
 
-      await client.query("DELETE FROM ledger_entries WHERE user_id = $1 AND invoice_id = $2", [req.userId, id]);
-      await client.query("DELETE FROM stock_movements WHERE user_id = $1 AND invoice_id = $2", [req.userId, id]);
+      // paid_at is deliberately left in place: it is the only record of what
+      // this invoice was before it was voided, and uncancelling reads it.
+      await client.query("DELETE FROM ledger_entries WHERE user_id = $1 AND invoice_id = $2", [req.shopId, id]);
+      await client.query("DELETE FROM stock_movements WHERE user_id = $1 AND invoice_id = $2", [req.shopId, id]);
       await client.query(
-        "UPDATE invoices SET cancelled_at = now(), cancel_reason = $3 WHERE id = $2 AND user_id = $1",
-        [req.userId, id, reason]
+        `UPDATE invoices SET cancelled_at = now(), cancel_reason = $3, status = 'tühistatud'
+          WHERE id = $2 AND user_id = $1`,
+        [req.shopId, id, reason]
       );
+      await audit(client, req.shopId, req.userId, "arve tühistatud", id, inv.nr + " · " + reason);
     });
 
-    res.json({ state: await loadState(req.userId) });
+    res.json({ state: await loadState(req.shopId) });
+  })
+);
+
+// Undo a cancellation made by mistake, within a day of making it. Everything
+// needed to rebuild the cash-book entry and the stock movements is still on
+// the invoice and its lines, so this restores rather than re-creates.
+const UNCANCEL_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+app.post(
+  "/api/invoices/:id/uncancel",
+  ownerOnly,
+  wrap(async (req, res) => {
+    const id = Number(req.params.id);
+
+    const invoice = await withTransaction(async (client) => {
+      const inv = await getInvoice(client, req.shopId, id, true);
+      if (!inv.cancelled_at) {
+        throw Object.assign(new Error("See arve ei ole tühistatud."), { status: 409 });
+      }
+      if (Date.now() - new Date(inv.cancelled_at).getTime() > UNCANCEL_WINDOW_MS) {
+        throw Object.assign(
+          new Error("Tühistamise saab tagasi võtta 24 tunni jooksul. Koosta uus arve."),
+          { status: 409 }
+        );
+      }
+
+      const lr = await client.query(
+        "SELECT * FROM invoice_lines WHERE invoice_id = $1 ORDER BY sort_order, id",
+        [id]
+      );
+      const lines = lr.rows.map((l) => ({
+        productId: l.product_id,
+        qty: Number(l.qty),
+        price: Number(l.price),
+        discount: Number(l.discount),
+      }));
+      await assertStock(client, req.shopId, lines);
+
+      const date = String(inv.invoice_date).slice(0, 10);
+      for (const l of lines) {
+        if (!l.productId) continue;
+        await client.query(
+          `INSERT INTO stock_movements (user_id, product_id, move_date, move_type, qty, price, invoice_id)
+           VALUES ($1,$2,$3,'out',$4,$5,$6)`,
+          [req.shopId, l.productId, date, l.qty, l.price, id]
+        );
+      }
+
+      // paid_at survived the cancellation, so it says what this invoice was.
+      const wasPaid = Boolean(inv.paid_at);
+      const r = await client.query(
+        `UPDATE invoices SET cancelled_at = NULL, cancel_reason = '', status = $3
+          WHERE id = $2 AND user_id = $1 RETURNING *`,
+        [req.shopId, id, wasPaid ? "makstud" : "esitatud"]
+      );
+      if (wasPaid) await bookIncome(client, req.shopId, r.rows[0], lr.rows);
+      await audit(client, req.shopId, req.userId, "tühistamine tagasi võetud", id, inv.nr);
+      return r.rows[0];
+    });
+
+    res.json({ invoice, state: await loadState(req.shopId) });
+  })
+);
+
+// ------------------------------------------------------------------- staff
+
+// Accounts that work for this shop. Creating one is how a barber gets a login;
+// the account points at the owner's shop_id, so it sees the same books rather
+// than an empty till of its own.
+app.post(
+  "/api/staff",
+  ownerOnly,
+  wrap(async (req, res) => {
+    const email = String(req.body.email || "").trim().toLowerCase();
+    const password = String(req.body.password || "");
+    const name = String(req.body.name || "").trim().slice(0, 120);
+    const role = ROLES.includes(req.body.role) ? req.body.role : "barber";
+    if (!isEmail(email)) return res.status(400).json({ error: "Vigane e-posti aadress." });
+    if (password.length < 8) return res.status(400).json({ error: "Parool peab olema vähemalt 8 tähemärki." });
+
+    const exists = await query("SELECT id FROM users WHERE email = $1", [email]);
+    if (exists.rowCount) return res.status(409).json({ error: "Selle e-postiga konto on juba olemas." });
+
+    const user = await withTransaction(async (client) => {
+      const r = await client.query(
+        `INSERT INTO users (email, password_hash, name, shop_id, role)
+         VALUES ($1,$2,$3,$4,$5) RETURNING id, email, name, role, active, created_at`,
+        [email, await hashPassword(password), name || null, req.shopId, role]
+      );
+      await audit(client, req.shopId, req.userId, "konto loodud", null, email + " · " + role);
+      return r.rows[0];
+    });
+
+    res.status(201).json({ user, state: await loadState(req.shopId) });
+  })
+);
+
+app.put(
+  "/api/staff/:id",
+  ownerOnly,
+  wrap(async (req, res) => {
+    const id = Number(req.params.id);
+    // The shop must keep an owner, and an owner must not be able to lock
+    // themselves out of their own books by accident.
+    if (id === req.userId && (req.body.role === "barber" || req.body.active === false)) {
+      return res.status(409).json({ error: "Iseenda õigusi ei saa ära võtta." });
+    }
+    const role = req.body.role === undefined ? null : (ROLES.includes(req.body.role) ? req.body.role : null);
+    if (req.body.role !== undefined && !role) {
+      return res.status(400).json({ error: "Tundmatu roll." });
+    }
+
+    const r = await query(
+      `UPDATE users SET role = COALESCE($3, role), active = COALESCE($4, active),
+              name = COALESCE($5, name)
+        WHERE id = $2 AND shop_id = $1
+        RETURNING id, email, name, role, active, created_at`,
+      [
+        req.shopId, id, role,
+        req.body.active === undefined ? null : Boolean(req.body.active),
+        req.body.name === undefined ? null : String(req.body.name).trim().slice(0, 120),
+      ]
+    );
+    if (!r.rowCount) return res.status(404).json({ error: "Kontot ei leitud." });
+    res.json({ user: r.rows[0], state: await loadState(req.shopId) });
+  })
+);
+
+// Switched off, never deleted: invoices point at their creator, and a barber
+// who leaves should not erase who rang up last year's sales.
+app.delete(
+  "/api/staff/:id",
+  ownerOnly,
+  wrap(async (req, res) => {
+    const id = Number(req.params.id);
+    if (id === req.userId) return res.status(409).json({ error: "Iseennast ei saa sulgeda." });
+    const r = await query(
+      "UPDATE users SET active = false WHERE id = $2 AND shop_id = $1 AND role <> 'omanik' RETURNING id, email",
+      [req.shopId, id]
+    );
+    if (!r.rowCount) return res.status(404).json({ error: "Kontot ei leitud või on see omaniku oma." });
+    res.json({ ok: true, state: await loadState(req.shopId) });
+  })
+);
+
+// --------------------------------------------------------------- customers
+
+// A regular, and the prices they have been promised. Those prices are only a
+// default the till fills in — the invoice line still stores its own copy, so
+// changing a customer's price never rewrites an invoice already issued.
+app.post(
+  "/api/customers",
+  requireAuth,
+  wrap(async (req, res) => {
+    const name = String(req.body.name || "").trim().slice(0, 200);
+    if (!name) return res.status(400).json({ error: "Kliendi nimi puudub." });
+    const r = await query(
+      `INSERT INTO customers (user_id, name, details, note) VALUES ($1,$2,$3,$4) RETURNING *`,
+      [
+        req.shopId, name,
+        String(req.body.details || "").trim().slice(0, 500),
+        String(req.body.note || "").trim().slice(0, 300),
+      ]
+    );
+    res.status(201).json({ customer: { ...r.rows[0], prices: {} }, state: await loadState(req.shopId) });
+  })
+);
+
+app.put(
+  "/api/customers/:id",
+  requireAuth,
+  wrap(async (req, res) => {
+    const id = Number(req.params.id);
+    const r = await query(
+      `UPDATE customers SET name = COALESCE($3, name), details = COALESCE($4, details),
+              note = COALESCE($5, note)
+        WHERE id = $2 AND user_id = $1 RETURNING *`,
+      [
+        req.shopId, id,
+        req.body.name === undefined ? null : String(req.body.name).trim().slice(0, 200),
+        req.body.details === undefined ? null : String(req.body.details).trim().slice(0, 500),
+        req.body.note === undefined ? null : String(req.body.note).trim().slice(0, 300),
+      ]
+    );
+    if (!r.rowCount) return res.status(404).json({ error: "Klienti ei leitud." });
+    res.json({ customer: r.rows[0], state: await loadState(req.shopId) });
+  })
+);
+
+// Set or clear one agreed price. A null price removes the agreement rather
+// than storing a zero, which would mean "free".
+app.put(
+  "/api/customers/:id/prices/:serviceId",
+  ownerOnly,
+  wrap(async (req, res) => {
+    const id = Number(req.params.id);
+    const serviceId = Number(req.params.serviceId);
+
+    const owned = await query("SELECT id FROM customers WHERE id = $2 AND user_id = $1", [req.shopId, id]);
+    if (!owned.rowCount) return res.status(404).json({ error: "Klienti ei leitud." });
+    const svc = await query("SELECT id FROM services WHERE id = $2 AND user_id = $1", [req.shopId, serviceId]);
+    if (!svc.rowCount) return res.status(404).json({ error: "Teenust ei leitud." });
+
+    if (req.body.price === null || req.body.price === "") {
+      await query("DELETE FROM customer_prices WHERE customer_id = $1 AND service_id = $2", [id, serviceId]);
+    } else {
+      await query(
+        `INSERT INTO customer_prices (customer_id, service_id, price) VALUES ($1,$2,$3)
+         ON CONFLICT (customer_id, service_id) DO UPDATE SET price = EXCLUDED.price`,
+        [id, serviceId, money(req.body.price)]
+      );
+    }
+    res.json({ state: await loadState(req.shopId) });
+  })
+);
+
+app.delete(
+  "/api/customers/:id",
+  ownerOnly,
+  wrap(async (req, res) => {
+    const r = await query(
+      "UPDATE customers SET active = false WHERE id = $2 AND user_id = $1 RETURNING id",
+      [req.shopId, Number(req.params.id)]
+    );
+    if (!r.rowCount) return res.status(404).json({ error: "Klienti ei leitud." });
+    res.json({ ok: true, state: await loadState(req.shopId) });
   })
 );
 
@@ -628,7 +1286,7 @@ const LEDGER_CATEGORIES = [
 
 app.post(
   "/api/ledger",
-  requireAuth,
+  ownerOnly,
   wrap(async (req, res) => {
     const date = isDate(req.body.date) ? req.body.date : today();
     const kind = req.body.kind === "tulu" ? "tulu" : "kulu";
@@ -638,13 +1296,14 @@ app.post(
     const category = String(req.body.category || "").replace(/\s+/g, " ").trim().slice(0, 60) || "Muu";
     const cash = Math.max(0, num(req.body.cash));
     const card = Math.max(0, num(req.body.card));
-    if (cents(cash) + cents(card) === 0) {
-      return res.status(400).json({ error: "Sisesta summa kas sularaha või kaardi lahtrisse." });
+    const bank = Math.max(0, num(req.body.bank));
+    if (cents(cash) + cents(card) + cents(bank) === 0) {
+      return res.status(400).json({ error: "Sisesta summa sularaha, kaardi või ülekande lahtrisse." });
     }
     const r = await query(
-      `INSERT INTO ledger_entries (user_id, entry_date, kind, category, description, cash, card)
-       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-      [req.userId, date, kind, category, String(req.body.description || "").slice(0, 300), cash, card]
+      `INSERT INTO ledger_entries (user_id, entry_date, kind, category, description, cash, card, bank)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+      [req.shopId, date, kind, category, String(req.body.description || "").slice(0, 300), cash, card, bank]
     );
     res.status(201).json({ entry: r.rows[0] });
   })
@@ -652,10 +1311,10 @@ app.post(
 
 app.delete(
   "/api/ledger/:id",
-  requireAuth,
+  ownerOnly,
   wrap(async (req, res) => {
     const r = await query("SELECT invoice_id FROM ledger_entries WHERE id = $2 AND user_id = $1", [
-      req.userId,
+      req.shopId,
       Number(req.params.id),
     ]);
     if (!r.rowCount) return res.status(404).json({ error: "Kannet ei leitud." });
@@ -665,7 +1324,7 @@ app.delete(
       });
     }
     await query("DELETE FROM ledger_entries WHERE id = $2 AND user_id = $1", [
-      req.userId,
+      req.shopId,
       Number(req.params.id),
     ]);
     res.json({ ok: true });
@@ -676,7 +1335,7 @@ app.delete(
 
 app.post(
   "/api/stock-movements",
-  requireAuth,
+  ownerOnly,
   wrap(async (req, res) => {
     const productId = Number(req.body.productId);
     const type = req.body.type === "out" ? "out" : "in";
@@ -686,7 +1345,7 @@ app.post(
     if (!(qty > 0)) return res.status(400).json({ error: "Kogus peab olema suurem kui null." });
 
     const owned = await query("SELECT id, name FROM products WHERE id = $2 AND user_id = $1", [
-      req.userId,
+      req.shopId,
       productId,
     ]);
     if (!owned.rowCount) return res.status(404).json({ error: "Toodet ei leitud." });
@@ -695,7 +1354,7 @@ app.post(
       const q = await query(
         `SELECT COALESCE(SUM(CASE WHEN move_type = 'in' THEN qty ELSE -qty END), 0) AS qty
            FROM stock_movements WHERE user_id = $1 AND product_id = $2`,
-        [req.userId, productId]
+        [req.shopId, productId]
       );
       const have = Number(q.rows[0].qty);
       if (have < qty) {
@@ -706,7 +1365,7 @@ app.post(
     const r = await query(
       `INSERT INTO stock_movements (user_id, product_id, move_date, move_type, qty, price)
        VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
-      [req.userId, productId, date, type, qty, price]
+      [req.shopId, productId, date, type, qty, price]
     );
     res.status(201).json({ movement: { ...r.rows[0], product_name: owned.rows[0].name } });
   })
@@ -714,10 +1373,10 @@ app.post(
 
 app.delete(
   "/api/stock-movements/:id",
-  requireAuth,
+  ownerOnly,
   wrap(async (req, res) => {
     const r = await query("SELECT invoice_id FROM stock_movements WHERE id = $2 AND user_id = $1", [
-      req.userId,
+      req.shopId,
       Number(req.params.id),
     ]);
     if (!r.rowCount) return res.status(404).json({ error: "Liikumist ei leitud." });
@@ -725,7 +1384,7 @@ app.delete(
       return res.status(409).json({ error: "See liikumine tuli müügist ja seda ei saa eraldi kustutada." });
     }
     await query("DELETE FROM stock_movements WHERE id = $2 AND user_id = $1", [
-      req.userId,
+      req.shopId,
       Number(req.params.id),
     ]);
     res.json({ ok: true });

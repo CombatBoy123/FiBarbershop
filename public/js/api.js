@@ -90,8 +90,31 @@ export const api = {
   // a sale writes the invoice, the cash-book entry and the stock movements
   // together; the response carries the refreshed state so nothing goes stale
   createSale: (sale) => post("/api/sales", sale),
+
+  // The composed-invoice flow. A draft is not a document — no number, nothing
+  // booked — which is why it can be edited over a week and deleted freely.
+  createInvoice: (invoice) => post("/api/invoices", invoice),
+  updateInvoice: (id, invoice) => put("/api/invoices/" + id, invoice),
+  // issue mints the number and moves the stock; payNow:false leaves it on credit
+  issueInvoice: (id, payment) => post("/api/invoices/" + id + "/issue", payment),
+  // the money finally arrived: this is what writes the cash-book entry
+  payInvoice: (id, payment) => post("/api/invoices/" + id + "/pay", payment),
+  deleteInvoice: (id) => del("/api/invoices/" + id),
   // voids an invoice: number kept, cash-book entry and stock movements undone
   cancelInvoice: (id, reason) => post("/api/invoices/" + id + "/cancel", { reason }),
+  uncancelInvoice: (id) => post("/api/invoices/" + id + "/uncancel", {}),
+
+  // staff accounts
+  addStaff: (u) => post("/api/staff", u),
+  updateStaff: (id, patch) => put("/api/staff/" + id, patch),
+  removeStaff: (id) => del("/api/staff/" + id),
+
+  // customers and the prices agreed with them
+  addCustomer: (c) => post("/api/customers", c),
+  updateCustomer: (id, patch) => put("/api/customers/" + id, patch),
+  removeCustomer: (id) => del("/api/customers/" + id),
+  setCustomerPrice: (id, serviceId, price) =>
+    put("/api/customers/" + id + "/prices/" + serviceId, { price }),
 
   // kassaraamat
   addLedger: (entry) => post("/api/ledger", entry),

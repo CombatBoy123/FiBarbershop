@@ -5,6 +5,7 @@ import { api, setToken, getToken, ApiError } from "./api.js";
 import {
   S, applyState, addLine, removeLine, updateLine, clearDraft, setMethod,
   syncPayment, draftTotal, draftVat, paymentMismatch, METHOD_LABEL,
+  duplicateLine, toggleLine, loadDraftFrom, applyCustomer, lineTotal, isOwner,
 } from "./state.js";
 import { VIEWS } from "./views.js";
 import { clear, toast, eur, num, dateET, todayISO, parseNum, downloadCSV } from "./util.js";
@@ -30,10 +31,20 @@ function applyTheme(theme) {
 
 // ----------------------------------------------------------------- render
 
+// Screens a barber has no business in. Hiding the tab is a courtesy, not the
+// security boundary — every route behind them checks the role server-side, so
+// a hand-typed URL or a poked fetch still comes back 403.
+const OWNER_TABS = ["cash", "stock", "price", "admin"];
+
 function render() {
+  const owner = isOwner();
   for (const b of document.querySelectorAll(".navtab[data-tab]")) {
+    const gated = OWNER_TABS.includes(b.dataset.tab);
+    b.hidden = gated && !owner;
     b.classList.toggle("on", b.dataset.tab === S.tab);
   }
+  if (!owner && OWNER_TABS.includes(S.tab)) S.tab = "pos";
+
   const view = VIEWS[S.tab] || VIEWS.pos;
   clear(viewEl).append(...view(actions));
   document.getElementById("navDate").textContent = dateET(todayISO());
@@ -69,14 +80,50 @@ function refreshTotals() {
         ? "Vahe " + num(Math.abs(mismatch) / 100) + " € — sularaha ja kaart kokku peavad võrduma summaga."
         : "";
   }
+  // Each expanded line shows its own total, and a discount changes it as you
+  // type — so the figure is repainted here rather than by rebuilding the row,
+  // which would take the caret out of the field mid-keystroke.
+  for (const l of S.draft.lines) set("dsum" + l.key, eur(lineTotal(l)));
+
   const blocked = !S.draft.lines.length || mismatch !== 0;
   const finish = document.getElementById("posFinish");
   if (finish) finish.disabled = blocked;
+  const draftBtn = document.getElementById("posDraft");
+  if (draftBtn) draftBtn.disabled = !S.draft.lines.length;
 
   set("barTotal", eur(total));
   set("barCount", S.draft.lines.length + " rida · " + METHOD_LABEL[S.draft.method]);
   const barFinish = document.getElementById("barFinish");
   if (barFinish) barFinish.disabled = blocked;
+}
+
+// The invoice as the server wants it. Shared by every path that writes one, so
+// a field added to a line is added in exactly one place.
+const draftPayload = () => ({
+  lines: S.draft.lines.map((l) => ({
+    productId: l.productId,
+    serviceId: l.serviceId,
+    name: l.name,
+    note: l.note,
+    unit: l.unit,
+    qty: l.qty,
+    price: l.price,
+    discount: l.discount,
+  })),
+  buyerName: S.draft.buyerName.trim(),
+  buyerDetails: S.draft.buyerDetails.trim(),
+  customerId: S.draft.customerId,
+  tip: S.draft.tip,
+});
+
+// Every write returns the whole refreshed state, so this is the one landing
+// spot for all of them.
+function afterWrite(result, { tab = "inv", invoiceId = null, message = "" } = {}) {
+  applyState(result.state);
+  if (invoiceId) S.selectedInvoiceId = invoiceId;
+  if (tab) S.tab = tab;
+  render();
+  if (message) toast(message);
 }
 
 // A failed call is either a dead session or something the user should read.
@@ -126,9 +173,30 @@ const actions = {
     render();
   },
 
+  // Typing in a line must not rebuild it: only the derived figures repaint,
+  // or the caret would jump out of the field between keystrokes.
   updateLine(key, patch) {
     updateLine(key, patch);
     refreshTotals();
+  },
+
+  toggleLine(key) {
+    toggleLine(key);
+    render();
+  },
+
+  // A second row of the same service, so it can be given its own price. This
+  // is what a consolidated invoice is built from.
+  duplicateLine(key) {
+    duplicateLine(key);
+    render();
+  },
+
+  // Picking a regular fills in the buyer block and drops their agreed prices
+  // onto matching lines — as a starting figure, still editable per line.
+  pickCustomer(id) {
+    applyCustomer(id);
+    render();
   },
 
   setTip(value) {
@@ -158,56 +226,202 @@ const actions = {
     render();
   },
 
+  // Park the invoice without issuing it. No number is minted and nothing is
+  // booked, so a consolidated invoice can be built up over a week — and thrown
+  // away again without leaving a hole in the sequence.
+  async saveDraft() {
+    if (!S.draft.lines.length) return;
+    const id = S.draft.editingId;
+    const result = await guard(() =>
+      id ? api.updateInvoice(id, draftPayload()) : api.createInvoice(draftPayload())
+    );
+    if (!result) return;
+    const newId = result.invoice.id;
+    clearDraft();
+    afterWrite(result, { invoiceId: newId, message: "Mustand salvestatud." });
+  },
+
   async finishSale() {
     if (!S.draft.lines.length) return;
     const button = document.getElementById("posFinish");
     if (button) button.disabled = true;
 
-    const result = await guard(() =>
-      api.createSale({
+    // Paid on the spot with no draft behind it: the till path, one call and
+    // one transaction, exactly as it always was.
+    if (!S.draft.editingId && S.draft.method !== "later") {
+      const result = await guard(() =>
+        api.createSale({
+          date: todayISO(),
+          ...draftPayload(),
+          cash: parseNum(S.draft.cash),
+          card: parseNum(S.draft.card),
+        })
+      );
+      if (!result) {
+        // The server refused (out of stock, payment mismatch). Its message is
+        // already on screen; re-render so the button becomes usable again.
+        render();
+        return;
+      }
+      const id = result.invoice.id;
+      const nr = result.invoice.nr;
+      clearDraft();
+      afterWrite(result, { invoiceId: id, message: "Arve " + nr + " koostatud · kanne kassaraamatus" });
+      return;
+    }
+
+    // Otherwise it is a composed invoice: make sure the draft is saved, then
+    // issue it. Issuing is the moment the number is minted and the stock moves.
+    let id = S.draft.editingId;
+    if (id) {
+      const updated = await guard(() => api.updateInvoice(id, draftPayload()));
+      if (!updated) return render();
+    } else {
+      const created = await guard(() => api.createInvoice({ date: todayISO(), ...draftPayload() }));
+      if (!created) return render();
+      id = created.invoice.id;
+    }
+
+    const payNow = S.draft.method !== "later";
+    const issued = await guard(() =>
+      api.issueInvoice(id, {
+        payNow,
         date: todayISO(),
-        lines: S.draft.lines.map((l) => ({
-          productId: l.productId,
-          name: l.name,
-          qty: l.qty,
-          price: l.price,
-        })),
-        buyerName: S.draft.buyerName.trim(),
-        buyerDetails: S.draft.buyerDetails.trim(),
-        tip: S.draft.tip,
         cash: parseNum(S.draft.cash),
         card: parseNum(S.draft.card),
       })
     );
+    if (!issued) return render();
 
-    if (!result) {
-      // The server refused (out of stock, payment mismatch). Its message is
-      // already on screen; re-render so the button becomes usable again.
-      render();
-      return;
-    }
-
-    applyState(result.state);
+    const nr = issued.invoice.nr;
     clearDraft();
-    S.selectedInvoiceId = result.invoice.id;
-    S.tab = "inv";
+    afterWrite(issued, {
+      invoiceId: issued.invoice.id,
+      message: payNow
+        ? "Arve " + nr + " koostatud · kanne kassaraamatus"
+        : "Arve " + nr + " esitatud · maksmata, tähtaeg " + dateET(issued.invoice.due_date),
+    });
+  },
+
+  // Reopen a saved draft in the till so more lines can be added to it.
+  editDraft(invoice) {
+    loadDraftFrom(invoice);
+    S.tab = "pos";
     render();
-    toast("Arve " + result.invoice.nr + " koostatud · kanne kassaraamatus");
+    toast("Mustand avatud — lisa read ja esita arve, kui valmis.");
+  },
+
+  async deleteDraft(invoice) {
+    if (!confirm("Kustutada see mustand?\n\nNumbrit pole eraldatud ja kassaraamatusse pole midagi kirjutatud, nii et midagi muud ei muutu.")) return;
+    const result = await guard(() => api.deleteInvoice(invoice.id));
+    if (!result) return;
+    if (S.draft.editingId === invoice.id) clearDraft();
+    afterWrite(result, { message: "Mustand kustutatud." });
+  },
+
+  // The money finally arrived. This is what writes the cash-book entry for a
+  // credit invoice — weeks after it was issued.
+  async payInvoice(invoice) {
+    if (!confirm(
+      "Märkida arve " + invoice.nr + " makstuks?\n\n" +
+      eur(invoice.total) + " kirjutatakse kassaraamatusse ülekandena."
+    )) return;
+    const result = await guard(() => api.payInvoice(invoice.id, { date: todayISO() }));
+    if (!result) return;
+    afterWrite(result, { invoiceId: invoice.id, message: "Arve " + invoice.nr + " makstud." });
   },
 
   // Voiding keeps the number and undoes the cash-book entry and the stock
-  // movements the sale created.
+  // movements the sale created. Two deliberate steps: the number has to be
+  // typed out, and the reason is required — one stray Enter used to be enough.
   async cancelInvoice(invoice) {
-    const reason = prompt(
-      "Arve " + invoice.nr + " tühistamine.\n\nNumber jääb alles, kassakanne ja laoliikumine keeratakse tagasi.\nPõhjus (vabatahtlik):",
+    const typed = prompt(
+      "Arve " + invoice.nr + " tühistamine.\n\n" +
+      "Number jääb numbrireas alles, kassakanne ja laoliikumine keeratakse tagasi.\n\n" +
+      "Kinnitamiseks kirjuta arve number:",
       ""
     );
+    if (typed === null) return;
+    if (String(typed).trim() !== String(invoice.nr)) {
+      return toast("Number ei klapi — arve jäi tühistamata.");
+    }
+    const reason = prompt("Tühistamise põhjus (kohustuslik):", "");
     if (reason === null) return;
+    if (!String(reason).trim()) {
+      return toast("Põhjus on kohustuslik — arve jäi tühistamata.");
+    }
     const result = await guard(() => api.cancelInvoice(invoice.id, reason));
     if (!result) return;
-    applyState(result.state);
+    afterWrite(result, { invoiceId: invoice.id,
+      message: "Arve " + invoice.nr + " tühistatud · kassa ja ladu taastatud" });
+  },
+
+  async uncancelInvoice(invoice) {
+    if (!confirm("Võtta arve " + invoice.nr + " tühistamine tagasi?\n\nKassakanne ja laoliikumine taastatakse.")) return;
+    const result = await guard(() => api.uncancelInvoice(invoice.id));
+    if (!result) return;
+    afterWrite(result, { invoiceId: invoice.id, message: "Arve " + invoice.nr + " taastatud." });
+  },
+
+  // ---- kliendid
+  openCustomer(id) {
+    S.selectedCustomerId = id;
     render();
-    toast("Arve " + invoice.nr + " tühistatud · kassa ja ladu taastatud");
+  },
+
+  async addCustomer(form) {
+    if (!String(form.name || "").trim()) return toast("Kliendi nimi puudub.");
+    const result = await guard(() => api.addCustomer(form));
+    if (!result) return;
+    S.selectedCustomerId = result.customer.id;
+    afterWrite(result, { tab: "cust", message: "Klient lisatud." });
+  },
+
+  // An empty field clears the agreement rather than storing a zero, which
+  // would mean the service is free for this customer.
+  async setCustomerPrice(customerId, serviceId, value) {
+    const price = String(value).trim() === "" ? null : parseNum(value);
+    const result = await guard(() => api.setCustomerPrice(customerId, serviceId, price));
+    if (!result) return;
+    afterWrite(result, { tab: "cust", message: price === null ? "Erihind eemaldatud." : "Erihind salvestatud." });
+  },
+
+  async removeCustomer(customer) {
+    if (!confirm("Eemaldada klient " + customer.name + "?\n\nVarasemad arved jäävad puutumata.")) return;
+    const result = await guard(() => api.removeCustomer(customer.id));
+    if (!result) return;
+    S.selectedCustomerId = null;
+    afterWrite(result, { tab: "cust", message: "Klient eemaldatud." });
+  },
+
+  // ---- kontod
+  async addStaff(form) {
+    if (!String(form.email || "").trim()) return toast("E-post puudub.");
+    if (String(form.password || "").length < 8) return toast("Parool peab olema vähemalt 8 tähemärki.");
+    const result = await guard(() => api.addStaff(form));
+    if (!result) return;
+    afterWrite(result, { tab: "admin", message: "Konto loodud — anna parool töötajale edasi." });
+  },
+
+  async setStaffRole(id, role) {
+    const result = await guard(() => api.updateStaff(id, { role }));
+    if (!result) return;
+    afterWrite(result, { tab: "admin", message: "Roll salvestatud." });
+  },
+
+  // Closed, never deleted: invoices point at their creator, so removing the
+  // account would erase who rang up last year's sales.
+  async closeStaff(user) {
+    if (!confirm("Sulgeda konto " + user.email + "?\n\nTa ei saa enam sisse logida. Tema arved jäävad alles.")) return;
+    const result = await guard(() => api.removeStaff(user.id));
+    if (!result) return;
+    afterWrite(result, { tab: "admin", message: "Konto suletud." });
+  },
+
+  async reopenStaff(user) {
+    const result = await guard(() => api.updateStaff(user.id, { active: true }));
+    if (!result) return;
+    afterWrite(result, { tab: "admin", message: "Konto taasavatud." });
   },
 
   // ---- kassaraamat
@@ -239,12 +453,12 @@ const actions = {
   },
 
   exportLedger() {
-    const rows = [["Kuupäev", "Tüüp", "Kategooria", "Kirjeldus", "Sularaha", "Kaart", "Summa"]];
+    const rows = [["Kuupäev", "Tüüp", "Kategooria", "Kirjeldus", "Sularaha", "Kaart", "Ülekanne", "Summa"]];
     for (const e of S.ledger) {
-      const gross = Number(e.cash || 0) + Number(e.card || 0);
+      const gross = Number(e.cash || 0) + Number(e.card || 0) + Number(e.bank || 0);
       rows.push([
         dateET(e.entry_date), e.kind, e.category, e.description,
-        num(e.cash), num(e.card), num(e.kind === "tulu" ? gross : -gross),
+        num(e.cash), num(e.card), num(e.bank), num(e.kind === "tulu" ? gross : -gross),
       ]);
     }
     downloadCSV("kassaraamat-" + todayISO() + ".csv", rows);
@@ -354,6 +568,9 @@ document.getElementById("loginForm").addEventListener("submit", async (e) => {
     const result = await api.login(email, password);
     setToken(result.token);
     S.user = result.user;
+    // Set before the first paint so a barber never sees an owner-only tab
+    // flash up while /api/bootstrap is still in flight.
+    S.me = result.user;
     document.getElementById("loginPassword").value = "";
     showApp();
     await refreshFromServer();
@@ -394,6 +611,7 @@ async function boot() {
   try {
     const me = await api.me();
     S.user = me.user;
+    S.me = me.user;
     showApp();
     await refreshFromServer();
   } catch (err) {

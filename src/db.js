@@ -168,6 +168,89 @@ const ready = pool.query(`
     WHERE company_phone = '';
   UPDATE settings SET company_email   = 'fijuuksur@gmail.com'
     WHERE company_email IN ('', 'info@fibarbers.ee');
+
+  -- =====================================================================
+  -- Arveldus 2.0. Every statement below is additive: no column is dropped
+  -- and none changes meaning, so the invoices already issued stay exactly
+  -- as they were.
+  -- =====================================================================
+
+  -- A line is a copy, never a reference: name and price are already written
+  -- onto the line at sale time, so repricing one invoice can never move the
+  -- price list. These three columns finish the thought — a description the
+  -- customer can read, a per-line discount, and a link back to the service
+  -- that exists only so a report can count haircuts. ON DELETE SET NULL:
+  -- retiring a service must not rewrite an invoice from last year.
+  ALTER TABLE invoice_lines ADD COLUMN IF NOT EXISTS note       TEXT    NOT NULL DEFAULT '';
+  ALTER TABLE invoice_lines ADD COLUMN IF NOT EXISTS discount   NUMERIC NOT NULL DEFAULT 0;
+  ALTER TABLE invoice_lines ADD COLUMN IF NOT EXISTS service_id INTEGER REFERENCES services(id) ON DELETE SET NULL;
+
+  -- An invoice now has a life: mustand → esitatud → makstud, or tühistatud.
+  -- 'makstud' is the default because that is what every existing invoice is —
+  -- the till has always taken the money before writing the row.
+  ALTER TABLE invoices ADD COLUMN IF NOT EXISTS status     TEXT NOT NULL DEFAULT 'makstud';
+  ALTER TABLE invoices ADD COLUMN IF NOT EXISTS paid_at    TIMESTAMPTZ;
+  ALTER TABLE invoices ADD COLUMN IF NOT EXISTS bank       NUMERIC NOT NULL DEFAULT 0;
+  ALTER TABLE invoices ADD COLUMN IF NOT EXISTS created_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
+  UPDATE invoices SET paid_at = created_at WHERE paid_at IS NULL AND cancelled_at IS NULL;
+  UPDATE invoices SET status  = 'tühistatud' WHERE cancelled_at IS NOT NULL AND status <> 'tühistatud';
+
+  -- A draft carries no number yet, so nr cannot stay NOT NULL. Drafts hold an
+  -- empty nr and uniqueness is enforced only on rows that actually have one.
+  ALTER TABLE invoices ALTER COLUMN nr DROP NOT NULL;
+  ALTER TABLE invoices DROP CONSTRAINT IF EXISTS invoices_user_id_nr_key;
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_invoices_nr
+    ON invoices(user_id, nr) WHERE nr IS NOT NULL AND nr <> '';
+
+  -- Staff. users.id keeps meaning "the shop" — every data table's user_id
+  -- still points at it — and shop_id says which shop an account works for.
+  -- The existing owner points at itself, so no data moves.
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS shop_id INTEGER REFERENCES users(id) ON DELETE CASCADE;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS role    TEXT NOT NULL DEFAULT 'omanik';
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS active  BOOLEAN NOT NULL DEFAULT true;
+  UPDATE users SET shop_id = id WHERE shop_id IS NULL;
+  CREATE INDEX IF NOT EXISTS idx_users_shop ON users(shop_id);
+
+  -- Who did what. The only place that can answer "who cancelled 0926-004".
+  CREATE TABLE IF NOT EXISTS audit_log (
+    id         SERIAL PRIMARY KEY,
+    shop_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    actor_id   INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    action     TEXT NOT NULL,
+    invoice_id INTEGER REFERENCES invoices(id) ON DELETE SET NULL,
+    detail     TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  );
+  CREATE INDEX IF NOT EXISTS idx_audit_shop ON audit_log(shop_id, created_at DESC, id DESC);
+
+  -- Regulars, and the price each has been promised. A price here is only a
+  -- default the till fills in: the line still gets its own copy, so changing
+  -- a customer's price never touches an invoice already written.
+  CREATE TABLE IF NOT EXISTS customers (
+    id         SERIAL PRIMARY KEY,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name       TEXT NOT NULL,
+    details    TEXT NOT NULL DEFAULT '',
+    note       TEXT NOT NULL DEFAULT '',
+    active     BOOLEAN NOT NULL DEFAULT true,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  );
+  CREATE INDEX IF NOT EXISTS idx_customers_user ON customers(user_id, name);
+
+  CREATE TABLE IF NOT EXISTS customer_prices (
+    id          SERIAL PRIMARY KEY,
+    customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+    service_id  INTEGER NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+    price       NUMERIC NOT NULL DEFAULT 0,
+    UNIQUE(customer_id, service_id)
+  );
+
+  ALTER TABLE invoices ADD COLUMN IF NOT EXISTS customer_id INTEGER REFERENCES customers(id) ON DELETE SET NULL;
+
+  -- A credit invoice is settled by transfer, which is neither the cash drawer
+  -- nor the card terminal. Booking it as either would put money in a place it
+  -- is not, so it gets its own column in the cash book too.
+  ALTER TABLE ledger_entries ADD COLUMN IF NOT EXISTS bank NUMERIC NOT NULL DEFAULT 0;
 `);
 
 // Every amount crossing this app is euros with two decimals. Summing floats

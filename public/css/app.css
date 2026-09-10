@@ -133,6 +133,13 @@ a.navtab { text-decoration:none; }
 .btnp.wide { width:100%; text-align:center; }
 .del { background:transparent; border:none; color:var(--tx3); cursor:pointer; font-size:15px; line-height:1; }
 .del:hover { color:var(--neg); }
+/* The row expander. Deliberately NOT .del — that class means "remove this"
+   everywhere else in the app, and the barber add-on clicks the first .del it
+   finds in a line to drop that line. */
+.dexp { background:transparent; border:none; color:var(--acc); cursor:pointer;
+        font:400 12px/1 "IBM Plex Mono",monospace; padding:2px; }
+.dexp:hover { color:var(--accd); }
+.dexp:focus-visible { outline:2px solid var(--acc); outline-offset:2px; }
 
 /* POS cards */
 .cardgrid { display:grid; grid-template-columns:repeat(auto-fill,minmax(190px,1fr)); gap:10px; }
@@ -166,9 +173,28 @@ a.navtab { text-decoration:none; }
 .svc.prod .svcn { font-size:13px; line-height:17px; }
 
 /* draft lines */
-.dline { display:grid; grid-template-columns:minmax(0,1fr) 58px 84px 26px; gap:8px;
+.dline { display:grid; grid-template-columns:minmax(0,1fr) 58px 84px 22px 22px; gap:8px;
          align-items:center; padding:8px 0; border-bottom:1px solid var(--line2); }
 .dline .inp { padding:6px 8px; text-align:right; font-family:"IBM Plex Mono",monospace; }
+
+/* An expanded line. Collapsed is the default and looks exactly as it always
+   did, so the till stays a three-tap job; everything that makes a line
+   flexible is one tap further in and costs nothing to anyone who skips it. */
+.dline.open { background:var(--panel); border-left:2px solid var(--acc);
+              padding-left:10px; margin-left:-12px; }
+.dname { background:transparent; border:none; padding:0; text-align:left; cursor:pointer;
+         font:400 14px/1.45 "IBM Plex Sans",sans-serif; color:var(--tx);
+         min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.dname:hover { color:var(--accd); }
+.dname:focus-visible { outline:2px solid var(--acc); outline-offset:2px; }
+.dsub { grid-column:1/-1; font:400 12px/1.5 "IBM Plex Sans",sans-serif; color:var(--tx3);
+        margin-top:-4px; }
+.dopen { grid-column:1/-1; display:flex; flex-direction:column; gap:10px; padding:8px 0 4px; }
+.dopen .inp { text-align:left; font-family:"IBM Plex Sans",sans-serif; }
+.dopen .formrow .inp { text-align:right; font-family:"IBM Plex Mono",monospace; }
+.dfoot { display:flex; align-items:center; gap:12px; padding-top:4px; }
+.dfoot .tr { margin-left:auto; font-variant-numeric:tabular-nums; }
+.btng.sm { padding:6px 10px; font-size:11px; }
 .tot { display:flex; justify-content:space-between; background:var(--btnbg); color:var(--btnfg);
        padding:11px 12px; font-family:"IBM Plex Mono", monospace; font-weight:500; font-size:15px;
        font-variant-numeric:tabular-nums; }
@@ -233,6 +259,11 @@ a.navtab { text-decoration:none; }
 .a4 .a4g { display:flex; justify-content:space-between; align-items:baseline; gap:16px;
            background:#0A0E12; color:#fff; padding:12px 16px; margin-top:10px; }
 .a4 .a4foot { margin-top:24px; font:400 12px/1.7 "IBM Plex Mono",monospace; color:#3A444F; }
+/* The description is what makes an invoice readable a month later, so it sits
+   under the name rather than being squeezed into it. */
+.a4 .a4note { display:block; font:400 11px/1.5 "IBM Plex Sans",sans-serif; color:#6B7887;
+              margin-top:2px; }
+.a4 .a4off { display:block; font:500 10px "IBM Plex Mono",monospace; color:#06485A; margin-top:1px; }
 
 /* cancelled invoices */
 .struck { text-decoration:line-through; }
@@ -314,6 +345,9 @@ a.navtab { text-decoration:none; }
   .a4 .hrow, .a4 .row { grid-template-columns:minmax(0,1fr) 38px 58px 62px; gap:6px; }
   .a4 .hrow > *:nth-child(3), .a4 .row > *:nth-child(3) { display:none; }
   .a4 .tr, .a4 .thr { font-size:12px; }
+  .a4 .a4note { font-size:10px; }
+  .dline { grid-template-columns:minmax(0,1fr) 52px 74px 20px 20px; }
+  .dopen .formrow { grid-template-columns:repeat(2,minmax(0,1fr)); }
   .a4 .a4tot { width:100%; }
   .a4 .a4t { font-size:28px; }
   .a4 .a4h { flex-direction:column; gap:12px; }
