@@ -112,6 +112,8 @@ export const api = {
   updateStaff: (id, patch) => put("/api/staff/" + id, patch),
   removeStaff: (id) => del("/api/staff/" + id),
   resetStaffPassword: (id, password) => put("/api/staff/" + id + "/password", { password }),
+  // which parts of the app this account may open — owner sets, server enforces
+  setStaffPermissions: (id, permissions) => put("/api/staff/" + id + "/permissions", { permissions }),
   changeMyPassword: (current, password) => put("/api/me/password", { current, password }),
 
   // customers and the prices agreed with them

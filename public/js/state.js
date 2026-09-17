@@ -47,6 +47,47 @@ export const S = {
 
 export const isOwner = () => !S.me || S.me.role === "omanik";
 
+// The parts of the app an owner can switch on and off per account, under
+// Kontod. Mirrors the list in src/auth.js; the server decides, this is only
+// what the screen draws.
+export const AREAS = ["cust", "price", "cash", "stock", "admin"];
+
+export const AREA_LABEL = {
+  cust: "Kliendid",
+  price: "Hinnakiri",
+  cash: "Kassaraamat",
+  stock: "Ladu",
+  admin: "Kontod",
+};
+
+// Kliendid stays on for a barber nobody has configured, because barbers had it
+// before these switches existed.
+const DEFAULT_PERMS = { cust: true, price: false, cash: false, stock: false, admin: false };
+
+// What THIS account may reach. The server sends `can` already resolved, so the
+// rules live in one place; the fallback below only covers the moment between
+// login and the first bootstrap.
+export function can(area) {
+  if (!S.me) return true;
+  if (S.me.role === "omanik") return true;
+  if (S.me.can && Object.prototype.hasOwnProperty.call(S.me.can, area)) return Boolean(S.me.can[area]);
+  return permsOf(S.me)[area];
+}
+
+// The effective switches for any account in the staff list, defaults filled in.
+export function permsOf(user) {
+  const out = {};
+  const granted = (user && user.permissions) || {};
+  for (const area of AREAS) {
+    out[area] = user && user.role === "omanik"
+      ? true
+      : Object.prototype.hasOwnProperty.call(granted, area)
+        ? Boolean(granted[area])
+        : DEFAULT_PERMS[area];
+  }
+  return out;
+}
+
 // Replaces everything the server owns. The draft is deliberately left alone:
 // a background refresh must never wipe a half-finished sale.
 export function applyState(data) {

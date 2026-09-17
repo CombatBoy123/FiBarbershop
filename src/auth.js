@@ -18,6 +18,42 @@ const TOKEN_TTL = "30d";
 // the column allows it, but nothing grants it until there is someone to be it.
 const ROLES = ["omanik", "barber"];
 
+// The parts of the app that can be handed out per account. The keys match the
+// nav tabs, so a permission and the screen it opens share one name.
+const AREAS = ["cust", "price", "cash", "stock", "admin"];
+
+const AREA_LABEL = {
+  cust: "Kliendid",
+  price: "Hinnakiri",
+  cash: "Kassaraamat",
+  stock: "Ladu",
+  admin: "Kontod",
+};
+
+// What a barber gets on an account nobody has configured. Kliendid stays on
+// because barbers already had it before these switches existed — defaulting it
+// off would have silently changed how the shop works.
+const DEFAULT_PERMS = { cust: true, price: false, cash: false, stock: false, admin: false };
+
+// An owner always has everything: the switches describe what a barber may
+// reach, and an owner who could be locked out of their own books would be a
+// footgun rather than a feature.
+function canArea(user, area) {
+  if (!user) return false;
+  if (user.role === "omanik") return true;
+  const granted = user.permissions || {};
+  if (Object.prototype.hasOwnProperty.call(granted, area)) return Boolean(granted[area]);
+  return Boolean(DEFAULT_PERMS[area]);
+}
+
+// Whatever arrives in the request body, what lands in the column is a clean
+// map of the known keys as real booleans.
+function cleanPermissions(input) {
+  const out = {};
+  for (const area of AREAS) out[area] = Boolean(input && input[area]);
+  return out;
+}
+
 async function hashPassword(plain) {
   return bcrypt.hash(plain, 12);
 }
@@ -58,7 +94,7 @@ async function requireAuth(req, res, next) {
     if (!payload) return res.status(401).json({ error: "Palun logi sisse." });
 
     const r = await query(
-      "SELECT id, email, name, shop_id, role, active FROM users WHERE id = $1",
+      "SELECT id, email, name, shop_id, role, active, permissions FROM users WHERE id = $1",
       [payload.sub]
     );
     const user = r.rows[0];
@@ -72,6 +108,8 @@ async function requireAuth(req, res, next) {
     req.userName = user.name;
     req.shopId = user.shop_id || user.id;
     req.role = user.role;
+    req.permissions = user.permissions || {};
+    req.can = (area) => canArea(user, area);
     next();
   } catch (err) {
     next(err);
@@ -87,12 +125,28 @@ const requireRole = (...roles) => (req, res, next) =>
     ? next()
     : res.status(403).json({ error: "Selleks toiminguks pole sul õigust." });
 
+// Gate a route by one of the switchable areas. Same rule as requireRole: it
+// sits on the route, where it cannot be forgotten halfway down a handler. The
+// client hides the tab too, but this is the part that actually decides.
+const requirePerm = (area) => (req, res, next) =>
+  req.can && req.can(area)
+    ? next()
+    : res.status(403).json({
+        error: (AREA_LABEL[area] || "See osa") + " ei ole sinu kontole lubatud. Küsi omanikult.",
+      });
+
 module.exports = {
   ROLES,
+  AREAS,
+  AREA_LABEL,
+  DEFAULT_PERMS,
+  canArea,
+  cleanPermissions,
   hashPassword,
   verifyPassword,
   signToken,
   verifyToken,
   requireAuth,
   requireRole,
+  requirePerm,
 };

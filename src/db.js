@@ -251,6 +251,13 @@ const ready = pool.query(`
   -- nor the card terminal. Booking it as either would put money in a place it
   -- is not, so it gets its own column in the cash book too.
   ALTER TABLE ledger_entries ADD COLUMN IF NOT EXISTS bank NUMERIC NOT NULL DEFAULT 0;
+
+  -- Per-account switches for the parts of the app a barber may reach —
+  -- Kliendid, Hinnakiri, Kassaraamat, Ladu, Kontod. A key that is absent
+  -- falls back to the role's default, so an account nobody has touched
+  -- behaves exactly as it did before this column existed. The owner's own
+  -- row is never consulted: an owner always has everything.
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS permissions JSONB NOT NULL DEFAULT '{}'::jsonb;
 `);
 
 // Every amount crossing this app is euros with two decimals. Summing floats

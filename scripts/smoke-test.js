@@ -282,6 +282,43 @@ async function call(token, method, path, body) {
     ok("omanik saab barberi parooli lahtestada", reset.status === 200, JSON.stringify(reset.data).slice(0, 110));
     ok("lahtestamine laheb auditijalge",
       reset.data.state.audit.some((x) => x.action === "parool lähtestatud"));
+    console.log("\n9. Konto kaupa lülitid");
+    const perms = (o) => Object.assign({ cust: false, price: false, cash: false, stock: false, admin: false }, o);
+    const meOf = async (t) => (await call(t, "GET", "/api/bootstrap")).data.me;
+
+    const before = await meOf(BT);
+    ok("barberil on vaikimisi Kliendid lubatud", before.can.cust === true, JSON.stringify(before.can));
+    ok("barberil on vaikimisi Hinnakiri keelatud", before.can.price === false);
+    ok("omanikul on koik lubatud", Object.values((await meOf(OT)).can).every(Boolean));
+
+    ok("barber ei saa ise oigusi muuta (403)",
+      (await call(BT, "PUT", "/api/staff/" + made.barber.id + "/permissions",
+        { permissions: perms({ price: true }) })).status === 403);
+    ok("omaniku oigusi ei saa piirata (409)",
+      (await call(OT, "PUT", "/api/staff/" + made.owner.id + "/permissions",
+        { permissions: perms({}) })).status === 409);
+
+    const grant = await call(OT, "PUT", "/api/staff/" + made.barber.id + "/permissions",
+      { permissions: perms({ cust: true, price: true }) });
+    ok("omanik saab lulitit keerata", grant.status === 200, JSON.stringify(grant.data).slice(0, 140));
+    ok("HINNAKIRI LUBATUD -> barber saab hinda muuta",
+      (await call(BT, "PUT", "/api/services/" + svc.id, { price: 33 })).status === 200);
+    ok("bootstrap naitab uut oigust", (await meOf(BT)).can.price === true);
+    ok("keelatud alad jaid endiselt kinni",
+      (await call(BT, "POST", "/api/ledger", { kind: "kulu", cash: 5 })).status === 403);
+
+    const revoke = await call(OT, "PUT", "/api/staff/" + made.barber.id + "/permissions",
+      { permissions: perms({ price: true }) });
+    ok("lulitit saab ka tagasi keerata", revoke.status === 200);
+    ok("KLIENDID KEELATUD -> barber saab 403",
+      (await call(BT, "POST", "/api/customers", { name: "Ei tohiks tekkida" })).status === 403);
+    ok("bootstrap naitab keeldu", (await meOf(BT)).can.cust === false);
+    ok("oiguste muutmine laks auditijalge",
+      revoke.data.state.audit.some((x) => x.action === "õigused muudetud"));
+
+    // Muudatus kehtib kohe, mitte tokeni eluea taga: konto rida loetakse igal paringul.
+    ok("vana token tunneb uut oigust kohe",
+      (await call(BT, "PUT", "/api/services/" + svc.id, { price: 34 })).status === 200);
   } finally {
     if (shopId) {
       await query("DELETE FROM users WHERE shop_id = $1 OR id = $1", [shopId]);

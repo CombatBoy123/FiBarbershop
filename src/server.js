@@ -10,7 +10,8 @@ const cors = require("cors");
 
 const { query, withTransaction, cents, euros } = require("./db");
 const {
-  ROLES, hashPassword, verifyPassword, signToken, requireAuth, requireRole,
+  ROLES, AREAS, cleanPermissions,
+  hashPassword, verifyPassword, signToken, requireAuth, requireRole, requirePerm,
 } = require("./auth");
 const { seedDefaults } = require("./seed");
 
@@ -82,10 +83,16 @@ function addDays(dateStr, days) {
 // instead of an unhandled rejection that silently kills the request.
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
-// Shorthand for the routes only the owner may reach: the shape of the books —
-// price list, settings, cash book, stock, and voiding an issued invoice.
-// Ringing up a sale is deliberately not on this list.
+// Owner-only, and not switchable. Everything here either moves money that has
+// already been booked or hands out access — cancelling, deleting and paying
+// invoices, creating accounts, changing roles and permissions, resetting
+// someone else's password. Making these grantable would let an account the
+// owner meant to limit quietly promote itself.
 const ownerOnly = [requireAuth, requireRole("omanik")];
+
+// Gated by a switch the owner can flip per account, under Kontod. An owner
+// always passes; a barber passes only when that area is on for them.
+const areaOnly = (area) => [requireAuth, requirePerm(area)];
 
 // ------------------------------------------------------------ invoice lines
 
@@ -391,7 +398,7 @@ async function loadState(shopId) {
       [shopId]
     ),
     query(
-      `SELECT id, email, name, role, active, created_at FROM users
+      `SELECT id, email, name, role, active, permissions, created_at FROM users
         WHERE shop_id = $1 ORDER BY (role = 'omanik') DESC, name, email`,
       [shopId]
     ),
@@ -445,9 +452,18 @@ app.get(
   requireAuth,
   wrap(async (req, res) => {
     const state = await loadState(req.shopId);
-    // The client needs to know which buttons to draw. It is not the security
-    // boundary — every gated route checks the role again server-side.
-    state.me = { id: req.userId, email: req.userEmail, name: req.userName, role: req.role };
+    // The client needs to know which tabs and buttons to draw. It is not the
+    // security boundary — every gated route checks again server-side. `can` is
+    // sent already resolved so the client never has to reimplement the
+    // role-and-default rules and drift out of step with them.
+    state.me = {
+      id: req.userId,
+      email: req.userEmail,
+      name: req.userName,
+      role: req.role,
+      permissions: req.permissions,
+      can: AREAS.reduce((acc, area) => Object.assign(acc, { [area]: req.can(area) }), {}),
+    };
     res.json(state);
   })
 );
@@ -462,7 +478,7 @@ const SETTING_FIELDS = [
 
 app.put(
   "/api/settings",
-  ownerOnly,
+  areaOnly("price"),
   wrap(async (req, res) => {
     const sets = [];
     const vals = [req.shopId];
@@ -489,7 +505,7 @@ app.put(
 
 app.post(
   "/api/services",
-  ownerOnly,
+  areaOnly("price"),
   wrap(async (req, res) => {
     const name = String(req.body.name || "").trim();
     if (!name) return res.status(400).json({ error: "Teenuse nimi puudub." });
@@ -505,7 +521,7 @@ app.post(
 
 app.put(
   "/api/services/:id",
-  ownerOnly,
+  areaOnly("price"),
   wrap(async (req, res) => {
     const r = await query(
       `UPDATE services SET name = COALESCE($3, name), price = COALESCE($4, price), note = COALESCE($5, note)
@@ -525,7 +541,7 @@ app.put(
 
 app.delete(
   "/api/services/:id",
-  ownerOnly,
+  areaOnly("price"),
   wrap(async (req, res) => {
     // Soft delete: past invoices keep the name they were sold under.
     const r = await query("UPDATE services SET active = false WHERE id = $2 AND user_id = $1 RETURNING id", [
@@ -539,7 +555,7 @@ app.delete(
 
 app.post(
   "/api/products",
-  ownerOnly,
+  areaOnly("price"),
   wrap(async (req, res) => {
     const name = String(req.body.name || "").trim();
     if (!name) return res.status(400).json({ error: "Toote nimi puudub." });
@@ -555,7 +571,7 @@ app.post(
 
 app.put(
   "/api/products/:id",
-  ownerOnly,
+  areaOnly("price"),
   wrap(async (req, res) => {
     const r = await query(
       `UPDATE products SET name = COALESCE($3, name), cost = COALESCE($4, cost),
@@ -580,7 +596,7 @@ app.put(
 // difference as one correcting movement and leaves the history intact.
 app.put(
   "/api/products/:id/stock",
-  ownerOnly,
+  areaOnly("stock"),
   wrap(async (req, res) => {
     const productId = Number(req.params.id);
     const target = num(req.body.qty, -1);
@@ -617,7 +633,7 @@ app.put(
 
 app.delete(
   "/api/products/:id",
-  ownerOnly,
+  areaOnly("price"),
   wrap(async (req, res) => {
     const r = await query("UPDATE products SET active = false WHERE id = $2 AND user_id = $1 RETURNING id", [
       req.shopId,
@@ -1292,6 +1308,39 @@ app.put(
   })
 );
 
+// Which parts of the app this account may open. Owner-only, and refused on an
+// owner's own row: the switches describe what a barber may reach, and an owner
+// who could switch their own access off would be one click from locking
+// themselves out of their own books.
+app.put(
+  "/api/staff/:id/permissions",
+  ownerOnly,
+  wrap(async (req, res) => {
+    const id = Number(req.params.id);
+    const target = await query("SELECT id, role FROM users WHERE id = $2 AND shop_id = $1", [req.shopId, id]);
+    if (!target.rowCount) return res.status(404).json({ error: "Kontot ei leitud." });
+    if (target.rows[0].role === "omanik") {
+      return res.status(409).json({
+        error: "Omanikul on alati kõik õigused. Piiramiseks muuda roll enne barberiks.",
+      });
+    }
+
+    const perms = cleanPermissions(req.body.permissions);
+    const r = await query(
+      "UPDATE users SET permissions = $3 WHERE id = $2 AND shop_id = $1 RETURNING id, email, name, role, active, permissions, created_at",
+      [req.shopId, id, JSON.stringify(perms)]
+    );
+    await query(
+      "INSERT INTO audit_log (shop_id, actor_id, action, detail) VALUES ($1,$2,$3,$4)",
+      [
+        req.shopId, req.userId, "õigused muudetud",
+        r.rows[0].email + " · " + (AREAS.filter((a) => perms[a]).join(", ") || "ei midagi"),
+      ]
+    );
+    res.json({ user: r.rows[0], state: await loadState(req.shopId) });
+  })
+);
+
 // Switched off, never deleted: invoices point at their creator, and a barber
 // who leaves should not erase who rang up last year's sales.
 app.delete(
@@ -1316,7 +1365,7 @@ app.delete(
 // changing a customer's price never rewrites an invoice already issued.
 app.post(
   "/api/customers",
-  requireAuth,
+  areaOnly("cust"),
   wrap(async (req, res) => {
     const name = String(req.body.name || "").trim().slice(0, 200);
     if (!name) return res.status(400).json({ error: "Kliendi nimi puudub." });
@@ -1334,7 +1383,7 @@ app.post(
 
 app.put(
   "/api/customers/:id",
-  requireAuth,
+  areaOnly("cust"),
   wrap(async (req, res) => {
     const id = Number(req.params.id);
     const r = await query(
@@ -1357,7 +1406,7 @@ app.put(
 // than storing a zero, which would mean "free".
 app.put(
   "/api/customers/:id/prices/:serviceId",
-  ownerOnly,
+  areaOnly("cust"),
   wrap(async (req, res) => {
     const id = Number(req.params.id);
     const serviceId = Number(req.params.serviceId);
@@ -1382,7 +1431,7 @@ app.put(
 
 app.delete(
   "/api/customers/:id",
-  ownerOnly,
+  areaOnly("cust"),
   wrap(async (req, res) => {
     const r = await query(
       "UPDATE customers SET active = false WHERE id = $2 AND user_id = $1 RETURNING id",
@@ -1402,7 +1451,7 @@ const LEDGER_CATEGORIES = [
 
 app.post(
   "/api/ledger",
-  ownerOnly,
+  areaOnly("cash"),
   wrap(async (req, res) => {
     const date = isDate(req.body.date) ? req.body.date : today();
     const kind = req.body.kind === "tulu" ? "tulu" : "kulu";
@@ -1427,7 +1476,7 @@ app.post(
 
 app.delete(
   "/api/ledger/:id",
-  ownerOnly,
+  areaOnly("cash"),
   wrap(async (req, res) => {
     const r = await query("SELECT invoice_id FROM ledger_entries WHERE id = $2 AND user_id = $1", [
       req.shopId,
@@ -1451,7 +1500,7 @@ app.delete(
 
 app.post(
   "/api/stock-movements",
-  ownerOnly,
+  areaOnly("stock"),
   wrap(async (req, res) => {
     const productId = Number(req.body.productId);
     const type = req.body.type === "out" ? "out" : "in";
@@ -1489,7 +1538,7 @@ app.post(
 
 app.delete(
   "/api/stock-movements/:id",
-  ownerOnly,
+  areaOnly("stock"),
   wrap(async (req, res) => {
     const r = await query("SELECT invoice_id FROM stock_movements WHERE id = $2 AND user_id = $1", [
       req.shopId,

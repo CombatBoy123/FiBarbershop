@@ -6,7 +6,7 @@ import {
   S, applyState, addLine, removeLine, updateLine, clearDraft, setMethod,
   syncPayment, draftTotal, draftVat, paymentMismatch, METHOD_LABEL,
   duplicateLine, toggleLine, loadDraftFrom, applyCustomer, lineTotal, isOwner,
-  isCancelled, isLastOfMonth,
+  isCancelled, isLastOfMonth, can, permsOf, AREA_LABEL,
 } from "./state.js";
 import { VIEWS } from "./views.js";
 import { clear, toast, eur, num, dateET, todayISO, parseNum, downloadCSV } from "./util.js";
@@ -32,19 +32,22 @@ function applyTheme(theme) {
 
 // ----------------------------------------------------------------- render
 
-// Screens a barber has no business in. Hiding the tab is a courtesy, not the
-// security boundary — every route behind them checks the role server-side, so
-// a hand-typed URL or a poked fetch still comes back 403.
-const OWNER_TABS = ["cash", "stock", "price", "admin"];
+// Screens that sit behind a switch the owner sets per account, under Kontod.
+// Töölaud, Kiirmüük and Arved are not on the list: they are the job. Hiding a
+// tab is a courtesy, not the security boundary — every route behind them
+// checks again server-side, so a hand-typed URL or a poked fetch still comes
+// back 403.
+const GATED_TABS = ["cust", "price", "cash", "stock", "admin"];
 
 function render() {
-  const owner = isOwner();
   for (const b of document.querySelectorAll(".navtab[data-tab]")) {
-    const gated = OWNER_TABS.includes(b.dataset.tab);
-    b.hidden = gated && !owner;
-    b.classList.toggle("on", b.dataset.tab === S.tab);
+    const tab = b.dataset.tab;
+    b.hidden = GATED_TABS.includes(tab) && !can(tab);
+    b.classList.toggle("on", tab === S.tab);
   }
-  if (!owner && OWNER_TABS.includes(S.tab)) S.tab = "pos";
+  // An owner revoking an area while that screen is open leaves nowhere to
+  // stand, so fall back to the till.
+  if (GATED_TABS.includes(S.tab) && !can(S.tab)) S.tab = "pos";
 
   const view = VIEWS[S.tab] || VIEWS.pos;
   clear(viewEl).append(...view(actions));
@@ -459,6 +462,21 @@ const actions = {
     const result = await guard(() => api.addStaff(form));
     if (!result) return;
     afterWrite(result, { tab: "admin", message: "Konto loodud — anna parool töötajale edasi." });
+  },
+
+  // Flip one area on or off for one account. The whole map is sent each time,
+  // so what the owner sees on screen is exactly what the account ends up with.
+  async setStaffPermission(user, area, value) {
+    const next = Object.assign(permsOf(user), { [area]: Boolean(value) });
+    const result = await guard(() => api.setStaffPermissions(user.id, next));
+    if (!result) {
+      render();
+      return;
+    }
+    afterWrite(result, {
+      tab: "admin",
+      message: (AREA_LABEL[area] || area) + (value ? " lubatud: " : " keelatud: ") + (user.name || user.email),
+    });
   },
 
   async setStaffRole(id, role) {

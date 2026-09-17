@@ -11,6 +11,7 @@ import {
   ledgerWithBalance, ledgerTotals, dayFigures, stockValue, lowStock, stockStatus, isCancelled,
   lineTotal, isDraft, isUnpaid, statusLabel, unpaidInvoices, unpaidTotal,
   isOwner, pastBuyers, customerById,
+  AREAS, AREA_LABEL, permsOf,
 } from "./state.js";
 
 // ------------------------------------------------------------- fragments
@@ -1036,6 +1037,32 @@ export function viewAdmin(actions) {
 
   const pw = { current: "", next: "", again: "" };
 
+  // One row per account, one switch per area. The owner's own row shows no
+  // switches: an owner always has everything, and offering a checkbox that the
+  // server refuses would be a lie on screen.
+  const permGrid = "1.3fr repeat(" + AREAS.length + ", minmax(72px, 1fr))";
+
+  const permRows = S.staff.map((u) => {
+    const perms = permsOf(u);
+    return h("div", { class: "row", style: "grid-template-columns:" + permGrid },
+      h("span", { class: "tr" },
+        h("span", { text: u.name || u.email }),
+        u.active ? null : h("span", { class: "pill neg", style: "margin-left:8px", text: "suletud" })
+      ),
+      ...AREAS.map((area) =>
+        u.role === "omanik"
+          ? h("span", { class: "thr r", title: "Omanikul on alati kõik õigused", text: "kõik" })
+          : h("label", { class: "permbox", title: AREA_LABEL[area] + " — " + (u.name || u.email) },
+              h("input", {
+                type: "checkbox", checked: perms[area],
+                "aria-label": AREA_LABEL[area] + ": " + (u.name || u.email),
+                onchange: (e) => actions.setStaffPermission(u, area, e.target.checked),
+              })
+            )
+      )
+    );
+  });
+
   const auditRows = S.audit.map((a) =>
     h("div", { class: "row", style: "grid-template-columns:120px 1fr 1fr" },
       h("span", { class: "tr mono", text: dateET(a.created_at) }),
@@ -1054,6 +1081,17 @@ export function viewAdmin(actions) {
           h("p", { class: "thr", text: "Töötajad", style: "margin:0 0 10px" }),
           table(grid, ["Nimi", "E-post", "Roll", "Konto", "Parool"],
             staffRows, "Kontosid pole.")
+        ),
+
+        h("div", {},
+          h("p", { class: "thr", text: "Mida keegi näeb", style: "margin:0 0 10px" }),
+          table(permGrid, ["Konto", ...AREAS.map((a) => AREA_LABEL[a])],
+            permRows, "Kontosid pole."),
+          h("p", { class: "lab", style: "color:var(--tx3);font-weight:400;margin:10px 0 0;line-height:1.5" },
+            "Lüliti peidab vahekaardi ja keelab ka serveris — lingi käsitsi tippimine ei aita. " +
+            "Töölaud, Kiirmüük ja Arved jäävad kõigile: see on töö ise. " +
+            "Arvete tühistamine, kustutamine ja makstuks märkimine ning kontode haldus " +
+            "jäävad alati ainult omanikule, ka siis kui Kontod on kellelegi lubatud.")
         ),
 
         panel({},
