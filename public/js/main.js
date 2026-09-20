@@ -6,7 +6,7 @@ import {
   S, applyState, addLine, removeLine, updateLine, clearDraft, setMethod,
   syncPayment, draftTotal, draftVat, paymentMismatch, METHOD_LABEL,
   duplicateLine, toggleLine, loadDraftFrom, applyCustomer, lineTotal, isOwner,
-  isCancelled, isLastOfMonth, can, permsOf, AREA_LABEL,
+  isCancelled, isLastOfMonth, can, permsOf, AREA_LABEL, monthlyByBarber,
 } from "./state.js";
 import { VIEWS } from "./views.js";
 import { clear, toast, eur, num, dateET, todayISO, parseNum, downloadCSV } from "./util.js";
@@ -37,17 +37,21 @@ function applyTheme(theme) {
 // tab is a courtesy, not the security boundary — every route behind them
 // checks again server-side, so a hand-typed URL or a poked fetch still comes
 // back 403.
-const GATED_TABS = ["cust", "price", "cash", "stock", "admin"];
+const GATED_TABS = ["cust", "price", "cash", "stock", "admin", "month"];
+
+// A tab whose permission is named differently from the tab itself.
+const TAB_AREA = { month: "admin" };
+const areaOfTab = (tab) => TAB_AREA[tab] || tab;
 
 function render() {
   for (const b of document.querySelectorAll(".navtab[data-tab]")) {
     const tab = b.dataset.tab;
-    b.hidden = GATED_TABS.includes(tab) && !can(tab);
+    b.hidden = GATED_TABS.includes(tab) && !can(areaOfTab(tab));
     b.classList.toggle("on", tab === S.tab);
   }
   // An owner revoking an area while that screen is open leaves nowhere to
   // stand, so fall back to the till.
-  if (GATED_TABS.includes(S.tab) && !can(S.tab)) S.tab = "pos";
+  if (GATED_TABS.includes(S.tab) && !can(areaOfTab(S.tab))) S.tab = "pos";
 
   const view = VIEWS[S.tab] || VIEWS.pos;
   clear(viewEl).append(...view(actions));
@@ -107,6 +111,7 @@ const draftPayload = () => ({
   lines: S.draft.lines.map((l) => ({
     productId: l.productId,
     serviceId: l.serviceId,
+    barberId: l.barberId,
     name: l.name,
     note: l.note,
     unit: l.unit,
@@ -588,6 +593,49 @@ const actions = {
     S.settings = saved.settings;
     render();
     toast("Salvestatud.");
+  },
+
+  // ---- kuu kokkuvõte
+  pickReportMonth(month) {
+    S.reportMonth = month;
+    render();
+  },
+
+  exportMonth(month) {
+    const rows = [["Kuu", "Barber", "Teenus", "Kogus", "Summa"]];
+    for (const r of monthlyByBarber(month)) {
+      for (const s of r.services) {
+        rows.push([month, r.barber, s.name, String(Math.round(s.qty * 100) / 100), num(s.gross)]);
+      }
+      rows.push([month, r.barber, "KOKKU", String(Math.round(r.qty * 100) / 100), num(r.gross)]);
+    }
+    if (rows.length === 1) return toast("Sel kuul pole midagi eksportida.");
+    downloadCSV("kuu-kokkuvote-" + month + ".csv", rows);
+    toast("CSV alla laaditud.");
+  },
+
+  // ---- barberid
+  // Which chair a login belongs to. Setting it gives that account its own
+  // prices under Hinnakiri and locks the till's picker to that one barber.
+  async linkBarber(user, barberId) {
+    // Clearing the field has to detach whatever barber currently points here,
+    // since the link is stored on the barber rather than on the account.
+    const current = S.barbers.find((b) => b.account_id === user.id);
+    if (current && current.id !== barberId) {
+      const cleared = await guard(() => api.updateBarber(current.id, { accountId: null }));
+      if (!cleared) return;
+    }
+    if (!barberId) {
+      const state = await guard(() => api.bootstrap());
+      if (state) afterWrite({ state }, { tab: "admin", message: "Seos eemaldatud: " + user.email });
+      return;
+    }
+    const result = await guard(() => api.updateBarber(barberId, { accountId: user.id }));
+    if (!result) return;
+    afterWrite(result, {
+      tab: "admin",
+      message: user.email + " → " + result.barber.name,
+    });
   },
 
   // ---- barberi hinnad

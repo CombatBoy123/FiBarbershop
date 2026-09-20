@@ -111,6 +111,7 @@ function normaliseLines(raw) {
     const line = {
       productId: l.productId ? Number(l.productId) : null,
       serviceId: l.serviceId ? Number(l.serviceId) : null,
+      barberId: l.barberId ? Number(l.barberId) : null,
       name: String(l.name || "").trim().slice(0, 200),
       note: String(l.note || "").trim().slice(0, 300),
       unit: UNITS.includes(String(l.unit)) ? String(l.unit) : "tk",
@@ -145,9 +146,9 @@ async function writeLines(client, shopId, invoiceId, lines, date) {
     const l = lines[i];
     await client.query(
       `INSERT INTO invoice_lines
-         (invoice_id, product_id, service_id, name, note, qty, unit, price, discount, sort_order)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-      [invoiceId, l.productId, l.serviceId, l.name, l.note, l.qty, l.unit, l.price, l.discount, i]
+         (invoice_id, product_id, service_id, barber_id, name, note, qty, unit, price, discount, sort_order)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+      [invoiceId, l.productId, l.serviceId, l.barberId, l.name, l.note, l.qty, l.unit, l.price, l.discount, i]
     );
     if (l.productId) {
       await client.query(
@@ -1429,6 +1430,11 @@ app.put(
       const u = await query("SELECT id FROM users WHERE id = $2 AND shop_id = $1", [req.shopId, Number(req.body.accountId)]);
       if (!u.rowCount) return res.status(404).json({ error: "Kontot ei leitud." });
       accountId = u.rows[0].id;
+      // One login, one chair. Without this an account could end up attached to
+      // two barbers and myBarber() would pick whichever sorted first.
+      await query("UPDATE barbers SET account_id = NULL WHERE user_id = $1 AND account_id = $2", [
+        req.shopId, accountId,
+      ]);
     }
     const r = await query(
       `UPDATE barbers SET name = COALESCE($3, name), tier = COALESCE($4, tier),

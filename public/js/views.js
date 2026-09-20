@@ -12,7 +12,7 @@ import {
   lineTotal, isDraft, isUnpaid, statusLabel, unpaidInvoices, unpaidTotal,
   isOwner, pastBuyers, customerById,
   AREAS, AREA_LABEL, permsOf,
-  myBarber, barberById, barberPrice,
+  myBarber, barberById, barberPrice, monthlyByBarber, invoiceMonths,
 } from "./state.js";
 
 // ------------------------------------------------------------- fragments
@@ -144,11 +144,15 @@ function activeBarber() {
 // barber's haircuts stay a row of their own on a consolidated invoice.
 function serviceLine(service) {
   const barber = activeBarber();
-  const barberPrice = barber && barber.priceFor ? barber.priceFor(service.name) : null;
+  const priced = barber && barber.priceFor ? barber.priceFor(service.name) : null;
+  // The add-on identifies a barber by slug; the line stores the row id, so a
+  // monthly payout is not built on a name that could be edited later.
+  const row = barber ? S.barbers.find((b) => b.slug === barber.id) : null;
   return {
     serviceId: service.id,
+    barberId: row ? row.id : null,
     name: service.name,
-    price: barberPrice == null ? Number(service.price) : Number(barberPrice),
+    price: priced == null ? Number(service.price) : Number(priced),
     note: barber ? barber.displayName : "",
   };
 }
@@ -1069,7 +1073,7 @@ export function viewCustomers(actions) {
 export function viewAdmin(actions) {
   const form = { name: "", email: "", password: "", role: "barber" };
 
-  const grid = "1fr 1.2fr 110px 104px 116px";
+  const grid = "1fr 1.2fr 100px 100px 108px 150px";
 
   const staffRows = S.staff.map((u) =>
     h("div", { class: "row", style: "grid-template-columns:" + grid },
@@ -1090,7 +1094,20 @@ export function viewAdmin(actions) {
       // The forgotten-password case. The owner sets a new one; the old is
       // replaced, never revealed.
       h("button", { class: "btng sm", type: "button",
-                    onclick: () => actions.resetStaffPassword(u) }, "Uus parool")
+                    onclick: () => actions.resetStaffPassword(u) }, "Uus parool"),
+
+      // Which chair this login belongs to. Setting it is what makes the
+      // account see its own prices under Hinnakiri, and what stops it ringing
+      // a sale up under another barber's name — the till picker then holds
+      // only this one.
+      u.role === "omanik"
+        ? h("span", { class: "thr r", title: "Omanik pääseb kõigi juurde", text: "—" })
+        : select(
+            { onchange: (e) => actions.linkBarber(u, e.target.value ? Number(e.target.value) : null) },
+            [{ value: "", label: "— sidumata —" },
+             ...S.barbers.map((b) => ({ value: b.id, label: b.name }))],
+            (S.barbers.find((b) => b.account_id === u.id) || {}).id || ""
+          )
     )
   );
 
@@ -1138,7 +1155,7 @@ export function viewAdmin(actions) {
       h("div", { class: "stack" },
         h("div", {},
           h("p", { class: "thr", text: "Töötajad", style: "margin:0 0 10px" }),
-          table(grid, ["Nimi", "E-post", "Roll", "Konto", "Parool"],
+          table(grid, ["Nimi", "E-post", "Roll", "Konto", "Parool", "Barber"],
             staffRows, "Kontosid pole.")
         ),
 
@@ -1205,6 +1222,63 @@ export function viewAdmin(actions) {
   ];
 }
 
+// ---------------------------------------------------------- kuu kokkuvõte
+
+// What each barber brought in over one month, which is the figure a payout is
+// worked out from. Built entirely from invoice lines already loaded, so the
+// month can be changed without another round trip.
+export function viewMonth(actions) {
+  const months = invoiceMonths();
+  const month = months.includes(S.reportMonth) ? S.reportMonth : months[0];
+  const rows = monthlyByBarber(month);
+  const total = Math.round(rows.reduce((s, r) => s + r.gross, 0) * 100) / 100;
+  const qty = rows.reduce((s, r) => s + r.qty, 0);
+
+  const grid = "1.4fr 80px 80px 110px 70px";
+
+  const body = rows.map((r) =>
+    h("div", { class: "row", style: "grid-template-columns:" + grid },
+      h("div", {},
+        h("div", { class: "tr", text: r.barber }),
+        h("div", { class: "thr", style: "margin-top:3px",
+                   text: r.services.map((s) => s.name + " ×" + s.qty).join(" · ").slice(0, 80) })
+      ),
+      h("span", { class: "tr mono r dim", text: String(r.lines) }),
+      h("span", { class: "tr mono r", text: String(Math.round(r.qty * 100) / 100) }),
+      h("span", { class: "tr mono r", text: eur(r.gross) }),
+      h("span", { class: "tr mono r dim",
+                  text: total > 0 ? Math.round((r.gross / total) * 100) + "%" : "–" })
+    )
+  );
+
+  return [
+    head(monthLabel(month + "-01"), "Kuu kokkuvõte",
+      select({ style: "width:auto;min-width:150px",
+               onchange: (e) => actions.pickReportMonth(e.target.value) },
+        months.map((m) => ({ value: m, label: monthLabel(m + "-01") })), month),
+      h("button", { class: "btng", type: "button",
+                    onclick: () => actions.exportMonth(month) }, "Ekspordi CSV")
+    ),
+
+    h("div", { class: "grid4" },
+      kpi("Käive kokku", eur(total)),
+      kpi("Teenuseid", String(Math.round(qty * 100) / 100)),
+      kpi("Barbereid", String(rows.length)),
+      kpi("Keskmine barberi kohta", eur(rows.length ? total / rows.length : 0), { inverse: true })
+    ),
+
+    table(grid,
+      ["Barber", { label: "Ridu", r: true }, { label: "Kogus", r: true },
+       { label: "Käive", r: true }, { label: "Osa", r: true }],
+      body, "Sel kuul pole ühtegi arvet."),
+
+    h("p", { class: "lab", style: "color:var(--tx3);font-weight:400;margin:12px 0 0;line-height:1.5" },
+      "Arvestatud on esitatud ja makstud arved; mustandid ja tühistatud arved jäävad välja. " +
+      "Rida jõuab barberi alla selle järgi, kes oli kassas valitud. " +
+      "„Määramata\" on read, mis tehti enne barberi valiku kasutuselevõttu."),
+  ];
+}
+
 export const VIEWS = {
   dash: viewDash,
   pos: viewPos,
@@ -1214,4 +1288,5 @@ export const VIEWS = {
   price: viewPrices,
   cust: viewCustomers,
   admin: viewAdmin,
+  month: viewMonth,
 };

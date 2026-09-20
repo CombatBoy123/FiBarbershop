@@ -22,6 +22,7 @@ export const S = {
   selectedInvoiceId: null,
   selectedCustomerId: null,
   selectedBarberId: null,
+  reportMonth: null,
 
   // the sale being rung up
   draft: {
@@ -141,8 +142,14 @@ export function myBarber() {
 // reach the till.
 export function publishBarbers() {
   if (typeof window === "undefined") return;
+  // A barber's account is tied to one chair. Publishing only their own profile
+  // is what stops them ringing a sale up under someone else's name and price —
+  // the picker has nothing else in it to choose. An owner keeps the full list,
+  // because building the week's consolidated invoice means moving between them.
+  const mine = myBarber();
+  const visible = !isOwner() && mine ? [mine] : S.barbers;
   try {
-    window.fiBarbers = S.barbers.map((b, i) => ({
+    window.fiBarbers = visible.map((b, i) => ({
       id: b.slug,
       displayName: b.name,
       tier: b.tier || "",
@@ -161,6 +168,61 @@ export function publishBarbers() {
   }
 }
 
+// What each barber brought in over one month. Built from the invoice lines
+// already in state, so it needs no extra call.
+//
+// A line says whose work it was through barber_id. Lines written before that
+// column existed fall back to matching the barber's name in the description,
+// which is where the till has been writing it all along; anything neither can
+// place is grouped as "Määramata" rather than being quietly dropped.
+export function monthlyByBarber(month) {
+  const key = String(month || todayISO()).slice(0, 7);
+  const rows = new Map();
+  const bump = (name, line, gross) => {
+    if (!rows.has(name)) rows.set(name, { barber: name, lines: 0, qty: 0, gross: 0, services: new Map() });
+    const r = rows.get(name);
+    r.lines += 1;
+    r.qty += Number(line.qty) || 0;
+    r.gross += gross;
+    const s = r.services.get(line.name) || { name: line.name, qty: 0, gross: 0 };
+    s.qty += Number(line.qty) || 0;
+    s.gross += gross;
+    r.services.set(line.name, s);
+  };
+
+  for (const inv of S.invoices) {
+    if (isCancelled(inv) || isDraft(inv)) continue;
+    if (String(inv.invoice_date).slice(0, 7) !== key) continue;
+    for (const l of inv.lines || []) {
+      const byId = l.barber_id ? S.barbers.find((b) => b.id === l.barber_id) : null;
+      const byNote = !byId && l.note ? S.barbers.find((b) => b.name === String(l.note).trim()) : null;
+      const who = byId || byNote;
+      bump(who ? who.name : "Määramata", l, lineTotal(l));
+    }
+  }
+
+  const out = [...rows.values()].map((r) => ({
+    ...r,
+    gross: Math.round(r.gross * 100) / 100,
+    services: [...r.services.values()]
+      .map((s) => ({ ...s, gross: Math.round(s.gross * 100) / 100 }))
+      .sort((a, b) => b.gross - a.gross),
+  }));
+  out.sort((a, b) => b.gross - a.gross);
+  return out;
+}
+
+// The months that actually have invoices, newest first, for the picker.
+export function invoiceMonths() {
+  const set = new Set();
+  for (const i of S.invoices) {
+    if (isDraft(i)) continue;
+    set.add(String(i.invoice_date).slice(0, 7));
+  }
+  if (!set.size) set.add(todayISO().slice(0, 7));
+  return [...set].sort().reverse();
+}
+
 // ------------------------------------------------------------- the draft
 
 let keySeq = 0;
@@ -169,6 +231,7 @@ const blankLine = (l) => ({
   key: ++keySeq,
   productId: l.productId == null ? null : l.productId,
   serviceId: l.serviceId == null ? null : l.serviceId,
+  barberId: l.barberId == null ? null : l.barberId,
   name: l.name,
   note: l.note || "",
   unit: l.unit || "tk",
@@ -250,6 +313,7 @@ export function loadDraftFrom(invoice) {
     blankLine({
       productId: l.product_id,
       serviceId: l.service_id,
+      barberId: l.barber_id,
       name: l.name,
       note: l.note,
       unit: l.unit,

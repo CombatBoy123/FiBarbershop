@@ -282,6 +282,11 @@ const ready = pool.query(`
   -- One row per barber per service. The offered column carries what the till
   -- used to infer by matching words in service names: whether this barber
   -- performs this treatment at all. A missing row means the same as false.
+  -- Whose work this line was. The barber's name is already written into the
+  -- line's description, but a text match is a poor thing to build a monthly
+  -- payout on — a rename would silently split one barber into two.
+  ALTER TABLE invoice_lines ADD COLUMN IF NOT EXISTS barber_id INTEGER REFERENCES barbers(id) ON DELETE SET NULL;
+
   CREATE TABLE IF NOT EXISTS barber_prices (
     id         SERIAL PRIMARY KEY,
     barber_id  INTEGER NOT NULL REFERENCES barbers(id) ON DELETE CASCADE,
