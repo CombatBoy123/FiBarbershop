@@ -116,6 +116,13 @@ export const api = {
   setStaffPermissions: (id, permissions) => put("/api/staff/" + id + "/permissions", { permissions }),
   changeMyPassword: (current, password) => put("/api/me/password", { current, password }),
 
+  // barbers and what each of them charges — the till reads these too
+  addBarber: (b) => post("/api/barbers", b),
+  updateBarber: (id, patch) => put("/api/barbers/" + id, patch),
+  removeBarber: (id) => del("/api/barbers/" + id),
+  setBarberPrice: (id, serviceId, price, offered) =>
+    put("/api/barbers/" + id + "/prices/" + serviceId, { price, offered }),
+
   // customers and the prices agreed with them
   addCustomer: (c) => post("/api/customers", c),
   updateCustomer: (id, patch) => put("/api/customers/" + id, patch),

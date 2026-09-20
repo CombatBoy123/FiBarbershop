@@ -12,6 +12,7 @@ import {
   lineTotal, isDraft, isUnpaid, statusLabel, unpaidInvoices, unpaidTotal,
   isOwner, pastBuyers, customerById,
   AREAS, AREA_LABEL, permsOf,
+  myBarber, barberById, barberPrice,
 } from "./state.js";
 
 // ------------------------------------------------------------- fragments
@@ -841,6 +842,62 @@ export function viewPrices(actions) {
       }),
     }));
 
+  // Whose prices are being edited. The owner picks from all of them; anyone
+  // else sees only the barber their account is linked to, which is what makes
+  // "my own prices" work without handing out a picker.
+  const own = myBarber();
+  const picked = isOwner()
+    ? (barberById(S.selectedBarberId) || S.barbers[0] || null)
+    : own;
+
+  const barberRows = picked
+    ? S.services.map((s) => {
+        const bp = barberPrice(picked, s);
+        return h("div", { class: "row", style: "grid-template-columns:1fr 90px 70px 110px" },
+          h("span", { class: "tr" + (bp.offered ? "" : " dim struck"), text: s.name }),
+          h("span", { class: "tr mono r dim", text: num(s.price) }),
+          h("label", { class: "permbox", title: "Kas " + picked.name + " seda teeb" },
+            h("input", {
+              type: "checkbox", checked: bp.offered,
+              "aria-label": "Pakub: " + s.name,
+              onchange: (e) => actions.setBarberPrice(picked, s, bp.price, e.target.checked),
+            })
+          ),
+          inp({
+            type: "number", min: "0", step: "0.01", value: String(bp.price),
+            disabled: !bp.offered,
+            "aria-label": picked.name + " hind: " + s.name,
+            onchange: (e) => actions.setBarberPrice(picked, s, parseNum(e.target.value), true),
+          })
+        );
+      })
+    : [];
+
+  const barberBlock = !picked
+    ? null
+    : h("div", {},
+        h("div", { style: "display:flex;justify-content:space-between;align-items:center;gap:12px;margin:0 0 10px;flex-wrap:wrap" },
+          h("p", { class: "thr", text: "Barberi hinnad", style: "margin:0" }),
+          // The picker is the owner's. A barber reaching this screen sees the
+          // one name their account is attached to and nobody else's.
+          isOwner()
+            ? select(
+                { style: "width:auto;min-width:190px",
+                  onchange: (e) => actions.pickBarber(Number(e.target.value)) },
+                S.barbers.map((b) => ({ value: b.id, label: b.name + (b.tier ? " · " + b.tier : "") })),
+                picked.id
+              )
+            : h("span", { class: "pill pos", text: picked.name })
+        ),
+        table("1fr 90px 70px 110px",
+          ["Teenus", { label: "Tavahind", r: true }, { label: "Pakub", r: true }, { label: "Hind", r: true }],
+          barberRows, "Teenuseid pole."),
+        h("p", { class: "lab", style: "color:var(--tx3);font-weight:400;margin:10px 0 0;line-height:1.5" },
+          "Need hinnad ilmuvad kassas, kui see barber on valitud. Märkeruudu eemaldamine " +
+          "kriipsutab teenuse tema all läbi ja seda ei saa talle arvele lisada. " +
+          "Salongi enda tavahind ülal jääb puutumata.")
+      );
+
   return [
     head("Teenused ja käibemaks", "Hinnakiri"),
 
@@ -851,6 +908,8 @@ export function viewPrices(actions) {
           table("1fr 110px 1fr", ["Teenus", { label: "Hind", r: true }, "Märkus"],
             serviceRows, "Teenuseid pole.")
         ),
+        barberBlock,
+
         h("div", {},
           h("p", { class: "thr", text: "Tooted", style: "margin:0 0 10px" }),
           table("1fr 110px 110px",

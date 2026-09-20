@@ -258,6 +258,38 @@ const ready = pool.query(`
   -- behaves exactly as it did before this column existed. The owner's own
   -- row is never consulted: an owner always has everything.
   ALTER TABLE users ADD COLUMN IF NOT EXISTS permissions JSONB NOT NULL DEFAULT '{}'::jsonb;
+
+  -- The people who cut hair, and what each of them charges.
+  --
+  -- A barber is not the same thing as a login: the shop has five barbers and
+  -- two accounts, and a guest barber may never have one at all. account_id is
+  -- therefore optional — when it is set, that person sees their own prices in
+  -- Hinnakiri without the owner having to pick them from a list.
+  CREATE TABLE IF NOT EXISTS barbers (
+    id         SERIAL PRIMARY KEY,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    slug       TEXT NOT NULL,
+    name       TEXT NOT NULL,
+    tier       TEXT NOT NULL DEFAULT '',
+    phone      TEXT NOT NULL DEFAULT '',
+    account_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    active     BOOLEAN NOT NULL DEFAULT true,
+    UNIQUE(user_id, slug)
+  );
+  CREATE INDEX IF NOT EXISTS idx_barbers_user ON barbers(user_id, sort_order, id);
+
+  -- One row per barber per service. The offered column carries what the till
+  -- used to infer by matching words in service names: whether this barber
+  -- performs this treatment at all. A missing row means the same as false.
+  CREATE TABLE IF NOT EXISTS barber_prices (
+    id         SERIAL PRIMARY KEY,
+    barber_id  INTEGER NOT NULL REFERENCES barbers(id) ON DELETE CASCADE,
+    service_id INTEGER NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+    price      NUMERIC NOT NULL DEFAULT 0,
+    offered    BOOLEAN NOT NULL DEFAULT true,
+    UNIQUE(barber_id, service_id)
+  );
 `);
 
 // Every amount crossing this app is euros with two decimals. Summing floats

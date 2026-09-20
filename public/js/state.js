@@ -17,9 +17,11 @@ export const S = {
   movements: [],
   staff: [],
   customers: [],
+  barbers: [],
   audit: [],
   selectedInvoiceId: null,
   selectedCustomerId: null,
+  selectedBarberId: null,
 
   // the sale being rung up
   draft: {
@@ -99,14 +101,63 @@ export function applyState(data) {
   S.movements = data.movements || [];
   S.staff = data.staff || [];
   S.customers = data.customers || [];
+  S.barbers = data.barbers || [];
   S.audit = data.audit || [];
   if (data.me) S.me = data.me;
+  publishBarbers();
   if (S.selectedInvoiceId && !S.invoices.some((i) => i.id === S.selectedInvoiceId)) {
     S.selectedInvoiceId = null;
   }
   if (!S.selectedInvoiceId && S.invoices.length) S.selectedInvoiceId = S.invoices[0].id;
   if (S.selectedCustomerId && !S.customers.some((c) => c.id === S.selectedCustomerId)) {
     S.selectedCustomerId = null;
+  }
+}
+
+// ------------------------------------------------------------- barbers
+
+export const barberById = (id) => S.barbers.find((b) => b.id === id) || null;
+
+// What this barber charges for a service, and whether they perform it at all.
+// Falls back to the shop's own price so a service added after the barber was
+// created still has a number on it.
+export function barberPrice(barber, service) {
+  const row = barber && barber.prices ? barber.prices[service.id] : null;
+  if (!row) return { price: Number(service.price), offered: false };
+  return { price: Number(row.price), offered: Boolean(row.offered) };
+}
+
+// The barber this account IS, when the owner has linked the two. That link is
+// what lets a barber open Hinnakiri and see their own prices without anyone
+// handing them a picker.
+export function myBarber() {
+  if (!S.me) return null;
+  return S.barbers.find((b) => b.account_id === S.me.id) || null;
+}
+
+// Hand the barber picker add-on the database's version of this list, in the
+// shape it already expects. Without this the add-on falls back to the five
+// barbers hard-coded inside it, and a price edited under Hinnakiri would never
+// reach the till.
+export function publishBarbers() {
+  if (typeof window === "undefined") return;
+  try {
+    window.fiBarbers = S.barbers.map((b, i) => ({
+      id: b.slug,
+      displayName: b.name,
+      tier: b.tier || "",
+      phone: b.phone || null,
+      isDefault: i === 0,
+      services: S.services
+        .filter((s) => barberPrice(b, s).offered)
+        .map((s) => ({
+          name: s.name,
+          price: { type: "fixed", amount: barberPrice(b, s).price },
+          isAddOn: false,
+        })),
+    }));
+  } catch (e) {
+    /* the add-on keeps its own list */
   }
 }
 

@@ -590,6 +590,30 @@ const actions = {
     toast("Salvestatud.");
   },
 
+  // ---- barberi hinnad
+  pickBarber(id) {
+    S.selectedBarberId = id;
+    render();
+  },
+
+  // One barber's price for one service, and whether they perform it at all.
+  // The shop's own price list is untouched: this is what the till puts on a
+  // line when that barber is the one at the chair.
+  async setBarberPrice(barber, service, price, offered) {
+    const result = await guard(() => api.setBarberPrice(barber.id, service.id, price, offered));
+    if (!result) {
+      render();
+      return;
+    }
+    S.selectedBarberId = barber.id;
+    afterWrite(result, {
+      tab: "price",
+      message: offered
+        ? barber.name + " · " + service.name + " " + eur(price)
+        : barber.name + " ei paku: " + service.name,
+    });
+  },
+
   async saveService(id, patch) {
     const saved = await guard(() => api.updateService(id, patch));
     if (!saved) return;

@@ -363,7 +363,7 @@ app.get(
 async function loadState(shopId) {
   const [
     settings, services, products, stock, invoices, lines, ledger, moves,
-    staff, customers, custPrices, auditRows,
+    staff, customers, custPrices, barbers, barberPrices, auditRows,
   ] = await Promise.all([
     query("SELECT * FROM settings WHERE user_id = $1", [shopId]),
     query("SELECT * FROM services WHERE user_id = $1 AND active ORDER BY sort_order, id", [shopId]),
@@ -413,6 +413,18 @@ async function loadState(shopId) {
       [shopId]
     ),
     query(
+      `SELECT b.*, u.email AS account_email FROM barbers b
+         LEFT JOIN users u ON u.id = b.account_id
+        WHERE b.user_id = $1 AND b.active ORDER BY b.sort_order, b.id`,
+      [shopId]
+    ),
+    query(
+      `SELECT bp.* FROM barber_prices bp
+         JOIN barbers b ON b.id = bp.barber_id
+        WHERE b.user_id = $1`,
+      [shopId]
+    ),
+    query(
       `SELECT a.*, u.name AS actor_name, u.email AS actor_email, i.nr AS invoice_nr
          FROM audit_log a
          LEFT JOIN users u ON u.id = a.actor_id
@@ -433,6 +445,14 @@ async function loadState(shopId) {
     if (!pricesBy.has(p.customer_id)) pricesBy.set(p.customer_id, {});
     pricesBy.get(p.customer_id)[p.service_id] = Number(p.price);
   }
+  const barberPriceBy = new Map();
+  for (const p of barberPrices.rows) {
+    if (!barberPriceBy.has(p.barber_id)) barberPriceBy.set(p.barber_id, {});
+    barberPriceBy.get(p.barber_id)[p.service_id] = {
+      price: Number(p.price),
+      offered: p.offered,
+    };
+  }
 
   return {
     settings: settings.rows[0] || null,
@@ -443,6 +463,7 @@ async function loadState(shopId) {
     movements: moves.rows,
     staff: staff.rows,
     customers: customers.rows.map((c) => ({ ...c, prices: pricesBy.get(c.id) || {} })),
+    barbers: barbers.rows.map((b) => ({ ...b, prices: barberPriceBy.get(b.id) || {} })),
     audit: auditRows.rows,
   };
 }
@@ -1354,6 +1375,115 @@ app.delete(
       [req.shopId, id]
     );
     if (!r.rowCount) return res.status(404).json({ error: "Kontot ei leitud või on see omaniku oma." });
+    res.json({ ok: true, state: await loadState(req.shopId) });
+  })
+);
+
+// ---------------------------------------------------------------- barbers
+
+// The chair, not the login. A guest barber may never have an account, and the
+// shop has more barbers than accounts — so these are their own rows, with an
+// optional link to a login. When that link is set, the person sees their own
+// prices in Hinnakiri without anyone having to pick them from a list.
+app.post(
+  "/api/barbers",
+  areaOnly("price"),
+  wrap(async (req, res) => {
+    const name = String(req.body.name || "").trim().slice(0, 120);
+    if (!name) return res.status(400).json({ error: "Barberi nimi puudub." });
+    const slug = String(req.body.slug || name).toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "").slice(0, 40) || "barber";
+
+    const exists = await query("SELECT id FROM barbers WHERE user_id = $1 AND slug = $2", [req.shopId, slug]);
+    if (exists.rowCount) return res.status(409).json({ error: "Selle nimega barber on juba olemas." });
+
+    const r = await query(
+      `INSERT INTO barbers (user_id, slug, name, tier, phone, sort_order)
+       VALUES ($1,$2,$3,$4,$5,(SELECT COALESCE(MAX(sort_order)+1,0) FROM barbers WHERE user_id=$1))
+       RETURNING *`,
+      [req.shopId, slug, name, String(req.body.tier || "").slice(0, 60), String(req.body.phone || "").slice(0, 40)]
+    );
+
+    // A new barber starts on the shop's own price list rather than on nothing,
+    // so the till has a number to put on a line from the first sale.
+    const svc = await query("SELECT id, price FROM services WHERE user_id = $1 AND active", [req.shopId]);
+    for (const s of svc.rows) {
+      await query(
+        "INSERT INTO barber_prices (barber_id, service_id, price, offered) VALUES ($1,$2,$3,true)",
+        [r.rows[0].id, s.id, Number(s.price)]
+      );
+    }
+    res.status(201).json({ barber: r.rows[0], state: await loadState(req.shopId) });
+  })
+);
+
+app.put(
+  "/api/barbers/:id",
+  areaOnly("price"),
+  wrap(async (req, res) => {
+    const id = Number(req.params.id);
+    // Linking to an account is what makes "my own prices" work, so the account
+    // has to belong to this shop — otherwise one shop could point at another's.
+    let accountId = null;
+    if (req.body.accountId) {
+      const u = await query("SELECT id FROM users WHERE id = $2 AND shop_id = $1", [req.shopId, Number(req.body.accountId)]);
+      if (!u.rowCount) return res.status(404).json({ error: "Kontot ei leitud." });
+      accountId = u.rows[0].id;
+    }
+    const r = await query(
+      `UPDATE barbers SET name = COALESCE($3, name), tier = COALESCE($4, tier),
+              phone = COALESCE($5, phone),
+              account_id = CASE WHEN $6::boolean THEN $7 ELSE account_id END
+        WHERE id = $2 AND user_id = $1 RETURNING *`,
+      [
+        req.shopId, id,
+        req.body.name === undefined ? null : String(req.body.name).trim().slice(0, 120),
+        req.body.tier === undefined ? null : String(req.body.tier).slice(0, 60),
+        req.body.phone === undefined ? null : String(req.body.phone).slice(0, 40),
+        req.body.accountId !== undefined,
+        accountId,
+      ]
+    );
+    if (!r.rowCount) return res.status(404).json({ error: "Barberit ei leitud." });
+    res.json({ barber: r.rows[0], state: await loadState(req.shopId) });
+  })
+);
+
+// One barber's price for one service, and whether they perform it at all.
+app.put(
+  "/api/barbers/:id/prices/:serviceId",
+  areaOnly("price"),
+  wrap(async (req, res) => {
+    const id = Number(req.params.id);
+    const serviceId = Number(req.params.serviceId);
+
+    const owned = await query("SELECT id FROM barbers WHERE id = $2 AND user_id = $1", [req.shopId, id]);
+    if (!owned.rowCount) return res.status(404).json({ error: "Barberit ei leitud." });
+    const svc = await query("SELECT id FROM services WHERE id = $2 AND user_id = $1", [req.shopId, serviceId]);
+    if (!svc.rowCount) return res.status(404).json({ error: "Teenust ei leitud." });
+
+    const offered = req.body.offered === undefined ? true : Boolean(req.body.offered);
+    await query(
+      `INSERT INTO barber_prices (barber_id, service_id, price, offered) VALUES ($1,$2,$3,$4)
+       ON CONFLICT (barber_id, service_id)
+       DO UPDATE SET price = EXCLUDED.price, offered = EXCLUDED.offered`,
+      [id, serviceId, money(req.body.price === undefined ? 0 : req.body.price), offered]
+    );
+    res.json({ state: await loadState(req.shopId) });
+  })
+);
+
+app.delete(
+  "/api/barbers/:id",
+  areaOnly("price"),
+  wrap(async (req, res) => {
+    // Soft delete: past invoices name the barber in their line descriptions,
+    // and a removed row should not make that history unexplainable.
+    const r = await query(
+      "UPDATE barbers SET active = false WHERE id = $2 AND user_id = $1 RETURNING id, name",
+      [req.shopId, Number(req.params.id)]
+    );
+    if (!r.rowCount) return res.status(404).json({ error: "Barberit ei leitud." });
     res.json({ ok: true, state: await loadState(req.shopId) });
   })
 );

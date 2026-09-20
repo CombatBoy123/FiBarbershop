@@ -44,9 +44,47 @@
       ] },
   ];
 
+  // The list above is now a fallback. The barbers and their prices live in the
+  // database and reach this file through window.fiBarbers, which the till
+  // publishes from its own state — so a price changed under Hinnakiri is the
+  // price the tile shows, instead of this file and the database disagreeing.
+  // Without the app, or before its first load, the hard-coded list still runs.
+  function currentBarbers() {
+    var fromApp = (typeof window !== "undefined" && window.fiBarbers) || null;
+    return fromApp && fromApp.length ? fromApp : BARBERS;
+  }
+
   var byId = {};
-  BARBERS.forEach(function (b) { byId[b.id] = b; });
-  function defaultBarber() { return BARBERS.filter(function (b) { return b.isDefault; })[0] || BARBERS[0]; }
+  var indexedIds = "";
+
+  // Rebuilt whenever the published list changes. The selector is dropped with
+  // it, otherwise a barber added under Hinnakiri would never show up in a menu
+  // that was built once at boot.
+  function rebuildIndex() {
+    var list = currentBarbers();
+
+    // The index is rebuilt every time, not only when the roster changes: a
+    // price edited under Hinnakiri arrives as a new object with the same id
+    // and name, and keeping the old one would leave the tiles showing the
+    // price that was just replaced.
+    byId = {};
+    list.forEach(function (b) { byId[b.id] = b; });
+
+    // The menu is rebuilt only when who is on it actually changes, so it is
+    // not thrown away and re-made on every render.
+    var ids = list.map(function (b) { return b.id + ":" + b.displayName; }).join("|");
+    if (ids !== indexedIds) {
+      indexedIds = ids;
+      if (selRoot && selRoot.parentNode) selRoot.parentNode.removeChild(selRoot);
+      selRoot = null;
+    }
+    if (!byId[activeId]) activeId = defaultBarber().id;
+  }
+
+  function defaultBarber() {
+    var list = currentBarbers();
+    return list.filter(function (b) { return b.isDefault; })[0] || list[0];
+  }
 
   // ------------------------------------------------------------ helpers
   function parseLocalDate(iso) {
@@ -149,8 +187,11 @@
       // first place. Correcting the price after the fact would mean the second
       // click found a line at a different price and started a new row instead
       // of adding to the first — the same barber's work has to stack.
+      // Looks the barber up when it is asked, rather than closing over the
+      // object this was built from: after a price is edited under Hinnakiri
+      // that object is the stale one.
       priceFor: function (serviceName) {
-        var svc = barberServiceForCategory(b, category(serviceName));
+        var svc = barberServiceForCategory(active(), category(serviceName));
         return svc ? priceAmount(svc.price) : null;
       },
     };
@@ -243,7 +284,7 @@
     menu.setAttribute("aria-label", "Barber");
     menu.hidden = true;
 
-    BARBERS.forEach(function (b) {
+    currentBarbers().forEach(function (b) {
       var sp = startingPrice(b);
       var li = el("li", "bsel-opt");
       li.setAttribute("role", "option");
@@ -432,6 +473,7 @@
   // after — otherwise the observer would loop on our own edits.
   function apply() {
     if (obs) obs.disconnect();
+    rebuildIndex();
     // finally: never leave the observer detached — if it stopped, new lines
     // would silently keep the shop's price instead of the barber's.
     try {

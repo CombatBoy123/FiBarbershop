@@ -319,6 +319,58 @@ async function call(token, method, path, body) {
     // Muudatus kehtib kohe, mitte tokeni eluea taga: konto rida loetakse igal paringul.
     ok("vana token tunneb uut oigust kohe",
       (await call(BT, "PUT", "/api/services/" + svc.id, { price: 34 })).status === 200);
+    console.log("\n10. Barberite hinnad");
+    const boot2 = (await call(OT, "GET", "/api/bootstrap")).data;
+    ok("uus salong sai barberid kaasa", boot2.barbers.length === 5, boot2.barbers.length);
+    const jax = boot2.barbers.find((b) => b.slug === "jax");
+    const joss = boot2.barbers.find((b) => b.slug === "joss");
+    const hair = boot2.services.find((s) => s.name === "Juukselõikus");
+    const beard = boot2.services.find((s) => s.name === "Habe + juukselõikus");
+    ok("Jaxi juukseloikus on 30, mitte salongi 35",
+      Number(jax.prices[hair.id].price) === 30, jax.prices[hair.id] && jax.prices[hair.id].price);
+    ok("Joss ei paku habemetood", joss.prices[beard.id].offered === false,
+      JSON.stringify(joss.prices[beard.id]));
+
+    const ch = await call(OT, "PUT", "/api/barbers/" + jax.id + "/prices/" + hair.id,
+      { price: 32, offered: true });
+    ok("omanik saab barberi hinda muuta", ch.status === 200, JSON.stringify(ch.data).slice(0, 130));
+    ok("uus hind on seisus",
+      Number(ch.data.state.barbers.find((b) => b.id === jax.id).prices[hair.id].price) === 32);
+    ok("SALONGI TAVAHIND EI MUUTUNUD",
+      Number(ch.data.state.services.find((s) => s.id === hair.id).price) === Number(hair.price),
+      hair.price + " -> " + ch.data.state.services.find((s) => s.id === hair.id).price);
+
+    const off = await call(OT, "PUT", "/api/barbers/" + jax.id + "/prices/" + beard.id,
+      { price: 0, offered: false });
+    ok("teenuse saab barberi alt ara votta", off.status === 200);
+    ok("offered = false jai kirja",
+      off.data.state.barbers.find((b) => b.id === jax.id).prices[beard.id].offered === false);
+
+    // Osa 9 jattis barberile Hinnakirja oiguse sisse; vota see enne ara, et
+    // kontrollida just selle lulitit ja mitte eelmise osa jaanust.
+    await call(OT, "PUT", "/api/staff/" + made.barber.id + "/permissions",
+      { permissions: perms({ cust: true }) });
+    ok("ilma Hinnakirja oiguseta barber ei saa muuta (403)",
+      (await call(BT, "PUT", "/api/barbers/" + jax.id + "/prices/" + hair.id,
+        { price: 1, offered: true })).status === 403);
+    await call(OT, "PUT", "/api/staff/" + made.barber.id + "/permissions",
+      { permissions: perms({ price: true }) });
+    ok("Hinnakirja oigusega saab",
+      (await call(BT, "PUT", "/api/barbers/" + jax.id + "/prices/" + hair.id,
+        { price: 31, offered: true })).status === 200);
+
+    const link = await call(OT, "PUT", "/api/barbers/" + jax.id, { accountId: made.barber.id });
+    ok("barberi saab konto kulge siduda", link.status === 200, JSON.stringify(link.data).slice(0, 130));
+    ok("seos on seisus loetav",
+      link.data.state.barbers.find((b) => b.id === jax.id).account_id === made.barber.id);
+
+    const added = await call(OT, "POST", "/api/barbers", { name: "Barber Test", tier: "Rookie" });
+    ok("uue barberi lisamine", added.status === 201, JSON.stringify(added.data).slice(0, 130));
+    ok("uus barber alustab salongi hinnakirjaga",
+      Number(added.data.state.barbers.find((b) => b.id === added.data.barber.id)
+        .prices[hair.id].price) === Number(hair.price));
+    ok("barberi saab eemaldada",
+      (await call(OT, "DELETE", "/api/barbers/" + added.data.barber.id)).status === 200);
   } finally {
     if (shopId) {
       await query("DELETE FROM users WHERE shop_id = $1 OR id = $1", [shopId]);
