@@ -214,16 +214,17 @@ a.navtab { text-decoration:none; }
 /* KPI and tables */
 .kpi { background:var(--panel); padding:16px 18px; }
 .kpi.inv { background:var(--btnbg); }
-/* Darker label on the light-mode card, at the user's request (3.10:1,
-   below the 4.5:1 AA threshold the rest of this file targets). */
-.kpi.inv .thr { color:#55626F; }
-.kpi.inv .stat { color:#000000; }
-/* --btnbg flips from near-black to cyan in dark mode, so this card turns
-   cyan while its label and figure keep their light-mode colours — the
-   figure was var(--acc) on var(--btnbg), cyan on cyan, and vanished.
-   Pair them with the card's own foreground, as .btnp and .tot already do. */
-.app.dark .kpi.inv .thr { color:#0B2830; }
-.app.dark .kpi.inv .stat { color:var(--btnfg); }
+/* This card is painted with --btnbg, which is near-black in light mode and
+   cyan in dark, so its text has to follow the card rather than the theme —
+   a colour chosen for one of them disappears on the other. The figure was
+   hard-coded #000000: black on the light theme's near-black card, 1.06:1,
+   and the cash balance could not be read at all.
+   Take the foreground from the card's own token, the way .btnp and .tot
+   already do, and one rule resolves correctly in both themes. */
+.kpi.inv .thr { color:var(--navtx); }       /* 9.0:1 on the near-black card */
+.kpi.inv .stat { color:var(--btnfg); }      /* 19.4:1 light, 6.5:1 on the dark theme's cyan */
+/* Dark mode turns the card cyan, where that muted grey washes out. */
+.app.dark .kpi.inv .thr { color:#0B2830; }  /* 5.2:1 on cyan */
 .stat { font-family:"IBM Plex Mono", monospace; font-variant-numeric:tabular-nums;
         font-weight:500; font-size:26px; margin-top:7px; }
 .grid4 { display:grid; grid-template-columns:repeat(4,1fr); gap:1px; background:var(--line);
