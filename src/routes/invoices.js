@@ -9,12 +9,14 @@
 //     and, for credit, marked paid when the transfer arrives.
 //
 // After that an invoice can be cancelled (number kept, money and goods put
-// back), un-cancelled within a day, or — by the owner — deleted for good.
+// back), un-cancelled within a day, or deleted for good — by anyone with the
+// "Arvete kustutamine" switch, which every barber has unless the owner turns
+// it off. Marking an invoice paid stays with the owner.
 
 const express = require("express");
 
 const { withTransaction, cents, euros } = require("../db");
-const { requireAuth, ownerOnly } = require("../auth");
+const { requireAuth, ownerOnly, areaOnly } = require("../auth");
 const { wrap, httpError, moneyOr0, optionalId, paramId, text, date } = require("../lib/http");
 const { today, localDate, addDays } = require("../lib/dates");
 const {
@@ -333,7 +335,7 @@ router.post(
 // hands and no goods left the shelf.
 router.post(
   "/invoices/:id/cancel",
-  ownerOnly,
+  areaOnly("void"),
   wrap(async (req, res) => {
     const invoiceId = paramId(req);
     // Required, not optional: one stray Enter used to void an invoice and
@@ -371,7 +373,7 @@ const UNCANCEL_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 router.post(
   "/invoices/:id/uncancel",
-  ownerOnly,
+  areaOnly("void"),
   wrap(async (req, res) => {
     const invoiceId = paramId(req);
 
@@ -406,7 +408,8 @@ router.post(
 
 // ------------------------------------------------------ delete permanently
 
-// Remove an invoice from the books entirely. Owner only.
+// Remove an invoice from the books entirely. Anyone with the "Arvete
+// kustutamine" switch — every barber unless the owner turned it off.
 //
 // Any issued invoice, cancelled or not. Deleting anything but the month's
 // last invoice leaves a gap in the numbering, and the confirmation says so.
@@ -416,7 +419,7 @@ router.post(
 // audit row survives carrying the number, the buyer and the amount.
 router.delete(
   "/invoices/:id/permanent",
-  ownerOnly,
+  areaOnly("void"),
   wrap(async (req, res) => {
     const invoiceId = paramId(req);
 
