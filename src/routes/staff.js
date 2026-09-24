@@ -13,7 +13,7 @@ const router = express.Router();
 
 async function getStaff(client, shopId, staffId) {
   const r = await client.query(
-    "SELECT id, email, name, role, active FROM users WHERE id = $2 AND shop_id = $1 FOR UPDATE",
+    "SELECT id, email, name, role, active, permissions FROM users WHERE id = $2 AND shop_id = $1 FOR UPDATE",
     [shopId, staffId]
   );
   if (!r.rowCount) throw httpError(404, "Kontot ei leitud.");
@@ -106,12 +106,12 @@ router.put(
   ownerOnly,
   wrap(async (req, res) => {
     const staffId = paramId(req);
-    const perms = cleanPermissions(req.body.permissions);
     const user = await withTransaction(async (client) => {
       const cur = await getStaff(client, req.shopId, staffId);
       if (cur.role === "omanik") {
         throw httpError(409, "Omanikul on alati kõik õigused. Piiramiseks muuda roll enne barberiks.");
       }
+      const perms = cleanPermissions(req.body.permissions, cur.permissions);
       const r = await client.query(
         `UPDATE users SET permissions = $3 WHERE id = $2 AND shop_id = $1
          RETURNING id, email, name, role, active, permissions, created_at`,

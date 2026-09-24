@@ -392,6 +392,15 @@ async function call(token, method, path, body) {
     // Muudatus kehtib kohe, mitte tokeni eluea taga: konto rida loetakse igal paringul.
     ok("vana token tunneb uut oigust kohe",
       (await call(BT, "PUT", "/api/services/" + svc.id, { price: 34 })).status === 200);
+
+    // A page loaded before a switch existed sends a map without it. That
+    // must not turn the switch off.
+    await call(OT, "PUT", "/api/staff/" + made.barber.id + "/permissions", { permissions: { void: true } });
+    await call(OT, "PUT", "/api/staff/" + made.barber.id + "/permissions",
+      { permissions: { cust: true, price: false, cash: false, stock: false, admin: false } });
+    const after = await meOf(BT);
+    ok("SAATMATA LÜLITI JÄÄB NAGU OLI (vana leht ei lülita arvete kustutamist välja)",
+      after.can.void === true && after.can.cust === true, JSON.stringify(after.can));
     console.log("\n10. Barberite hinnad");
     const boot2 = (await call(OT, "GET", "/api/bootstrap")).data;
     ok("uus salong sai barberid kaasa", boot2.barbers.length === 5, boot2.barbers.length);
