@@ -5,10 +5,9 @@ hele ja tume teema. Andmed on Postgresis, seega igas seadmes on sama seis.
 
 Kliendid seda ei näe — sisse pääseb ainult kontoga, mille loob omanik.
 
-This folder is a reworked copy of
-[CombatBoy123/FiBarbershop](https://github.com/CombatBoy123/FiBarbershop).
-The first commit in this repository is the original, unchanged, so
-`git diff 563a78c -- FiBarbershop` shows everything that changed.
+Version 2 is a rework of the app as it stood at `c9fae16`;
+`git diff c9fae16` shows everything that changed. The sections below say what
+and why.
 
 ---
 

@@ -16,9 +16,6 @@ services:
     runtime: node
     plan: free            # change to your current plan if it isn't free
     branch: main
-    # In the Katsetused experiments repo the app lives in this subfolder.
-    # In the original FiBarbershop repo, delete this line.
-    rootDir: FiBarbershop
     buildCommand: npm ci
     startCommand: npm start
     # Answers 200 only when the process is up AND the database responds, so a
