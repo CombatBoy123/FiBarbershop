@@ -313,6 +313,19 @@ const MIGRATIONS = [
     // barber whose login leaked left the leaked session working for a month.
     sql: `ALTER TABLE users ADD COLUMN IF NOT EXISTS pw_changed_at TIMESTAMPTZ;`,
   },
+
+  {
+    id: 6,
+    name: "keep names on history when an account is deleted",
+    // Deleting an account removes the users row, and every invoice and audit
+    // row that pointed at it loses the link (ON DELETE SET NULL). The name is
+    // copied here first, so "who rang this up" and "who cancelled it" still
+    // have an answer after the person's login is gone.
+    sql: `
+      ALTER TABLE invoices  ADD COLUMN IF NOT EXISTS created_by_label TEXT NOT NULL DEFAULT '';
+      ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS actor_label      TEXT NOT NULL DEFAULT '';
+    `,
+  },
 ];
 
 // Several instances booting at once (a Render deploy overlaps the old one)

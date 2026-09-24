@@ -202,6 +202,36 @@ async function call(token, method, path, body) {
     const self = await call(OT, "PUT", "/api/staff/" + made.owner.id, { role: "barber" });
     ok("omanik ei saa iseennast alandada (409)", self.status === 409, self.status);
 
+    // Deleting an account removes the login for good, but not its history.
+    const leaver = { email: "lahkuja-" + Date.now() + "@example.invalid", password: "lahkuja-parool-1" };
+    const lv = await call(OT, "POST", "/api/staff", { ...leaver, name: "Lahkuja", role: "barber" });
+    const LT = (await call(null, "POST", "/api/login", leaver)).data.token;
+    const lvSale = await call(LT, "POST", "/api/sales", {
+      lines: [{ serviceId: svc.id, name: "Lahkuja lõikus", qty: 1, price: 10 }], cash: 10, card: 0,
+    });
+    await call(LT, "POST", "/api/invoices/" + lvSale.data.invoice.id + "/cancel", { reason: "Lahkuja test" });
+    const del = await call(OT, "DELETE", "/api/staff/" + lv.data.user.id);
+    ok("KONTO KUSTUTAMINE ÕNNESTUB", del.status === 200, del.status + " " + JSON.stringify(del.data).slice(0, 100));
+    const gone = await query("SELECT 1 FROM users WHERE id = $1", [lv.data.user.id]);
+    ok("KONTO ON ANDMEBAASIST PÄRISELT KADUNUD", gone.rowCount === 0);
+    ok("kustutatud konto ei ole töötajate nimekirjas", !del.data.state.staff.some((u) => u.id === lv.data.user.id));
+    ok("kustutatud konto sessioon ei tööta (401)", (await call(LT, "GET", "/api/bootstrap")).status === 401);
+    ok("kustutatud kontoga ei saa sisse logida (401)",
+      (await call(null, "POST", "/api/login", leaver)).status === 401);
+    const lvInv = del.data.state.invoices.find((i) => i.id === lvSale.data.invoice.id);
+    ok("tema arve jäi alles ja kannab tema nime", lvInv && lvInv.created_by_name === "Lahkuja",
+      lvInv && lvInv.created_by_name);
+    ok("tema tühistamine auditijälges kannab tema nime",
+      del.data.state.audit.some((x) => x.action === "arve tühistatud" && x.actor_name === "Lahkuja"));
+    ok("kustutamine ise on auditijälges",
+      del.data.state.audit.some((x) => x.action === "konto kustutatud" && x.detail.indexOf(leaver.email) === 0));
+    ok("sama e-postiga saab uue konto teha",
+      (await call(OT, "POST", "/api/staff", { ...leaver, role: "barber" })).status === 201);
+    ok("iseennast ei saa kustutada (409)",
+      (await call(OT, "DELETE", "/api/staff/" + made.owner.id)).status === 409);
+    ok("barber ei saa kontot kustutada (403)",
+      (await call(BT, "DELETE", "/api/staff/" + staff.data.user.id)).status === 403);
+
     const cust = await call(OT, "POST", "/api/customers", { name: "Metsa Ehitus OÜ", details: "14785236" });
     ok("kliendi lisamine", cust.status === 201, JSON.stringify(cust.data).slice(0, 140));
     const cId = cust.data.customer.id;
