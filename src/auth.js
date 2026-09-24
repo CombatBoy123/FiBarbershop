@@ -1,17 +1,12 @@
-// auth.js — password hashing, JWT signing, and the two middlewares every
+// auth.js — password hashing, JWT signing, and the middlewares every
 // protected route is built from: who is signed in, and what they may do.
 
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 
+const { JWT_SECRET } = require("./config");
 const { query } = require("./db");
 
-const JWT_SECRET = process.env.JWT_SECRET;
-if (!JWT_SECRET) {
-  throw new Error(
-    "JWT_SECRET is not set. Copy .env.example to .env and set a long random JWT_SECRET before starting the server."
-  );
-}
 const TOKEN_TTL = "30d";
 
 // The two roles the shop actually has. 'raamatupidaja' is deliberately absent:
@@ -54,18 +49,20 @@ function cleanPermissions(input) {
   return out;
 }
 
-async function hashPassword(plain) {
-  return bcrypt.hash(plain, 12);
-}
+const hashPassword = (plain) => bcrypt.hash(plain, 12);
+const verifyPassword = (plain, hash) => bcrypt.compare(plain, hash);
 
-async function verifyPassword(plain, hash) {
-  return bcrypt.compare(plain, hash);
-}
+// Compared against when the email matches no account, so a wrong email takes
+// as long to refuse as a wrong password and the response time does not reveal
+// which addresses have accounts.
+const DUMMY_HASH = bcrypt.hashSync("fi-barbershop-no-such-account", 12);
+const burnPasswordCheck = (plain) => bcrypt.compare(String(plain || ""), DUMMY_HASH);
 
+// `at` is the signing moment in milliseconds. The standard `iat` is whole
+// seconds, which would let a token minted in the same second as a password
+// reset survive it.
 function signToken(user) {
-  return jwt.sign({ sub: user.id, email: user.email }, JWT_SECRET, {
-    expiresIn: TOKEN_TTL,
-  });
+  return jwt.sign({ sub: user.id, email: user.email, at: Date.now() }, JWT_SECRET, { expiresIn: TOKEN_TTL });
 }
 
 function verifyToken(token) {
@@ -76,11 +73,19 @@ function verifyToken(token) {
   }
 }
 
+// A token signed before the account's password last changed is dead. Tokens
+// from before this rework carry only `iat`; they are judged by that.
+function tokenRevoked(payload, pwChangedAt) {
+  if (!pwChangedAt) return false;
+  const signedAt = payload.at !== undefined ? Number(payload.at) : Number(payload.iat || 0) * 1000;
+  return signedAt < new Date(pwChangedAt).getTime();
+}
+
 // Reads "Authorization: Bearer <token>" and then loads the account row.
 //
 // The row is read on every request rather than trusted from the token, because
-// the token lives for 30 days: an owner who demotes a barber or switches an
-// account off needs that to take effect now, not in a month.
+// the token lives for 30 days: an owner who demotes a barber, switches an
+// account off or resets its password needs that to take effect now.
 //
 // Two different ids come out of this and the difference is the whole design:
 //   req.userId — WHO is acting. Audit trail, created_by. Never scopes data.
@@ -94,11 +99,13 @@ async function requireAuth(req, res, next) {
     if (!payload) return res.status(401).json({ error: "Palun logi sisse." });
 
     const r = await query(
-      "SELECT id, email, name, shop_id, role, active, permissions FROM users WHERE id = $1",
+      "SELECT id, email, name, shop_id, role, active, permissions, pw_changed_at FROM users WHERE id = $1",
       [payload.sub]
     );
     const user = r.rows[0];
-    if (!user) return res.status(401).json({ error: "Palun logi sisse." });
+    if (!user || tokenRevoked(payload, user.pw_changed_at)) {
+      return res.status(401).json({ error: "Sessioon aegus. Palun logi uuesti sisse." });
+    }
     if (!user.active) {
       return res.status(403).json({ error: "See konto on suletud. Võta ühendust salongi omanikuga." });
     }
@@ -125,15 +132,21 @@ const requireRole = (...roles) => (req, res, next) =>
     ? next()
     : res.status(403).json({ error: "Selleks toiminguks pole sul õigust." });
 
-// Gate a route by one of the switchable areas. Same rule as requireRole: it
-// sits on the route, where it cannot be forgotten halfway down a handler. The
-// client hides the tab too, but this is the part that actually decides.
+// Gate a route by one of the switchable areas. Same rule as requireRole.
 const requirePerm = (area) => (req, res, next) =>
   req.can && req.can(area)
     ? next()
     : res.status(403).json({
         error: (AREA_LABEL[area] || "See osa") + " ei ole sinu kontole lubatud. Küsi omanikult.",
       });
+
+// Owner-only, and not switchable. Everything behind this either moves money
+// that has already been booked or hands out access. Making these grantable
+// would let an account the owner meant to limit quietly promote itself.
+const ownerOnly = [requireAuth, requireRole("omanik")];
+
+// Gated by a switch the owner can flip per account, under Kontod.
+const areaOnly = (area) => [requireAuth, requirePerm(area)];
 
 module.exports = {
   ROLES,
@@ -144,9 +157,13 @@ module.exports = {
   cleanPermissions,
   hashPassword,
   verifyPassword,
+  burnPasswordCheck,
   signToken,
   verifyToken,
+  tokenRevoked,
   requireAuth,
   requireRole,
   requirePerm,
+  ownerOnly,
+  areaOnly,
 };

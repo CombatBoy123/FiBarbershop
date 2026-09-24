@@ -1,19 +1,19 @@
-// smoke-test.js — end-to-end check of the invoicing rules against a running
-// server. Creates a THROWAWAY shop, exercises every flow, and drops it again,
-// so the real shop's books are never read or written.
+// smoke-test.js — end-to-end check of the invoicing rules against the real
+// app and a real database. Creates a THROWAWAY shop, exercises every flow,
+// and drops it again, so the real shop's books are never read or written.
 //
-//   npm start          (in one terminal)
-//   npm run smoke-test (in another)
+//   npm run smoke-test
+//
+// The app is started in-process on a spare port. To test a server that is
+// already running somewhere else instead, set SMOKE_BASE=http://host:port.
 
-// End-to-end smoke test against a THROWAWAY shop, created and dropped here.
-// The real Fi shop's rows are never read or written.
-require("dotenv").config();
-
-const { query, withTransaction, pool, ready } = require("../src/db");
+const { query, withTransaction, pool } = require("../src/db");
+const { ready } = require("../src/migrations");
 const { hashPassword, signToken } = require("../src/auth");
 const { seedDefaults } = require("../src/seed");
+const { createApp } = require("../src/app");
 
-const BASE = process.env.SMOKE_BASE || ("http://localhost:" + (process.env.PORT || 4100));
+let BASE = process.env.SMOKE_BASE || "";
 const EMAIL = "arveldus-test-" + Date.now() + "@example.invalid";
 const BARBER = "barber-test-" + Date.now() + "@example.invalid";
 
@@ -38,7 +38,13 @@ async function call(token, method, path, body) {
 }
 
 (async () => {
-  await ready;
+  await ready();
+  let server = null;
+  if (!BASE) {
+    server = createApp().listen(0);
+    await new Promise((r) => server.once("listening", r));
+    BASE = "http://127.0.0.1:" + server.address().port;
+  }
   let shopId = null;
   try {
     const made = await withTransaction(async (c) => {
@@ -56,7 +62,7 @@ async function call(token, method, path, body) {
     });
     shopId = made.owner.id;
     const OT = signToken(made.owner);
-    const BT = signToken(made.barber);
+    let BT = signToken(made.barber);
     console.log("\nTestsalong loodud, id " + shopId + "\n");
 
     console.log("1. Salong ja rollid");
@@ -270,9 +276,17 @@ async function call(token, method, path, body) {
       d4.nr === c3.nr, c3.nr + " kustutatud, jargmine sai " + d4.nr);
 
     const wrongPw = await call(BT, "PUT", "/api/me/password", { current: "vale", password: "uusparool123" });
-    ok("vale praeguse parooliga ei vaheta (401)", wrongPw.status === 401, wrongPw.status);
+    // 400, not 401: a 401 makes the till sign the person out, and a mistyped
+    // current password is not a dead session.
+    ok("vale praeguse parooliga ei vaheta (400, ei logi välja)", wrongPw.status === 400, wrongPw.status);
     const myPw = await call(BT, "PUT", "/api/me/password", { current: "y".repeat(24), password: "uusparool123" });
     ok("oma parooli vahetamine onnestub", myPw.status === 200, JSON.stringify(myPw.data).slice(0, 110));
+    // Changing your password ends every other session of the account; the
+    // one that changed it is handed a fresh token and carries on.
+    ok("VANA TOKEN KEHTETU PAROOLI VAHETUSE JÄREL (401)",
+      (await call(BT, "GET", "/api/bootstrap")).status === 401);
+    BT = myPw.data.token;
+    ok("uus token töötab edasi", (await call(BT, "GET", "/api/bootstrap")).status === 200);
     ok("liiga luhike parool keelatud (400)",
       (await call(BT, "PUT", "/api/me/password", { current: "uusparool123", password: "lyhike" })).status === 400);
 
@@ -282,6 +296,11 @@ async function call(token, method, path, body) {
     ok("omanik saab barberi parooli lahtestada", reset.status === 200, JSON.stringify(reset.data).slice(0, 110));
     ok("lahtestamine laheb auditijalge",
       reset.data.state.audit.some((x) => x.action === "parool lähtestatud"));
+    ok("LÄHTESTAMINE LÕPETAB BARBERI SESSIOONID (401)",
+      (await call(BT, "GET", "/api/bootstrap")).status === 401);
+    const relogin = await call(null, "POST", "/api/login", { email: BARBER, password: "omanikupandud123" });
+    ok("barber saab uue parooliga sisse", relogin.status === 200, relogin.status);
+    BT = relogin.data.token;
     console.log("\n9. Konto kaupa lülitid");
     const perms = (o) => Object.assign({ cust: false, price: false, cash: false, stock: false, admin: false }, o);
     const meOf = async (t) => (await call(t, "GET", "/api/bootstrap")).data.me;
@@ -371,6 +390,128 @@ async function call(token, method, path, body) {
         .prices[hair.id].price) === Number(hair.price));
     ok("barberi saab eemaldada",
       (await call(OT, "DELETE", "/api/barbers/" + added.data.barber.id)).status === 200);
+
+    // Every check below failed on the code this rework started from.
+    console.log("\n11. Parandatud vead");
+    const st11 = (await call(OT, "GET", "/api/bootstrap")).data;
+    const p2 = st11.products.find((p) => p.id !== (prod && prod.id)) || st11.products[0];
+    await call(OT, "POST", "/api/stock-movements", { productId: p2.id, type: "in", qty: 5 });
+    const shelf = async () =>
+      (await call(OT, "GET", "/api/bootstrap")).data.products.find((p) => p.id === p2.id).stock;
+    const jar = (qty) => ({ productId: p2.id, name: p2.name, qty: qty, price: 10 });
+
+    const dj = await call(BT, "POST", "/api/invoices", { lines: [jar(2)] });
+    ok("MUSTAND EI VÕTA KAUPA LAOST (5 jääb 5)", (await shelf()) === 5, "jääk " + (await shelf()));
+    await call(BT, "PUT", "/api/invoices/" + dj.data.invoice.id, { lines: [jar(2)] });
+    ok("mustandi muutmine ei võta kaupa laost", (await shelf()) === 5, "jääk " + (await shelf()));
+    const ij = await call(BT, "POST", "/api/invoices/" + dj.data.invoice.id + "/issue", { payNow: true, cash: 20, card: 0 });
+    ok("esitamine võtab kauba laost TÄPSELT ÜKS KORD (5 -> 3)",
+      ij.status === 200 && (await shelf()) === 3, ij.status + " / jääk " + (await shelf()));
+
+    const dj2 = await call(BT, "POST", "/api/invoices", { lines: [jar(1)] });
+    await call(BT, "DELETE", "/api/invoices/" + dj2.data.invoice.id);
+    ok("mustandi kustutamine ei muuda laoseisu", (await shelf()) === 3, "jääk " + (await shelf()));
+
+    const split = await call(BT, "POST", "/api/sales", { lines: [jar(1), jar(1), jar(1), jar(1)], cash: 40, card: 0 });
+    ok("NELI 1-TK RIDA 3-TK LAOST EI LÄHE LÄBI (409)", split.status === 409, split.status);
+    ok("laoseis jäi alles", (await shelf()) === 3, "jääk " + (await shelf()));
+
+    const hairLine = { serviceId: svc.id, name: "Juukselõikus", qty: 1, price: 35 };
+    const negCash = await call(BT, "POST", "/api/sales", { lines: [hairLine], cash: -10, card: 45 });
+    ok("NEGATIIVNE SULARAHA KEELATUD (400)", negCash.status === 400, negCash.status);
+
+    const cr = await call(BT, "POST", "/api/invoices", { lines: [hairLine] });
+    await call(BT, "POST", "/api/invoices/" + cr.data.invoice.id + "/issue", { payNow: false });
+    const overpay = await call(OT, "POST", "/api/invoices/" + cr.data.invoice.id + "/pay", { cash: 50 });
+    ok("ÜLEMAKSE EI TEE NEGATIIVSET ÜLEKANNET (400)", overpay.status === 400, overpay.status);
+    const crPaid = await call(OT, "POST", "/api/invoices/" + cr.data.invoice.id + "/pay", { cash: 10 });
+    ok("osaliselt sularahas, ülejäänu ülekandega",
+      crPaid.status === 200 && Number(crPaid.data.invoice.bank) === 25 && Number(crPaid.data.invoice.cash) === 10,
+      crPaid.data.invoice && crPaid.data.invoice.cash + " / " + crPaid.data.invoice.bank);
+
+    const d0 = new Date();
+    const lastMonth = new Date(Date.UTC(d0.getUTCFullYear(), d0.getUTCMonth() - 1, 15)).toISOString().slice(0, 10);
+    const back = await call(BT, "POST", "/api/sales", { date: lastMonth, lines: [hairLine], cash: 35, card: 0 });
+    ok("tagantjärele müük saab oma kuu numbri",
+      back.status === 201 && back.data.invoice.nr.slice(0, 4) === lastMonth.slice(5, 7) + lastMonth.slice(2, 4),
+      back.data.invoice && back.data.invoice.nr);
+    const afterBack = await call(BT, "POST", "/api/sales", { lines: [hairLine], cash: 35, card: 0 });
+    ok("PÄRAST TAGANTJÄRELE MÜÜKI TÖÖTAB KASSA EDASI (varem 500 igaveseks)",
+      afterBack.status === 201, afterBack.status + " " + JSON.stringify(afterBack.data).slice(0, 80));
+
+    ok("olematu kuupäev keelatud (400)",
+      (await call(BT, "POST", "/api/sales", { date: "2026-02-31", lines: [hairLine], cash: 35 })).status === 400);
+    ok("vigane id aadressis annab 404, mitte 500",
+      (await call(OT, "DELETE", "/api/invoices/abc")).status === 404);
+    ok("olematu toode real keelatud (400)",
+      (await call(BT, "POST", "/api/invoices", { lines: [{ productId: 2147480000, name: "x", qty: 1, price: 1 }] })).status === 400);
+    ok("vigane kogus keelatud (400)",
+      (await call(BT, "POST", "/api/sales", { lines: [{ name: "x", qty: "abc", price: 1 }], cash: 1 })).status === 400);
+
+    const bankOnly = await call(OT, "POST", "/api/ledger", { kind: "kulu", category: "Rent", bank: 12.5 });
+    ok("KASSARAAMATU KANNE AINULT ÜLEKANDEGA", bankOnly.status === 201 && Number(bankOnly.data.entry.bank) === 12.5,
+      bankOnly.status + " " + JSON.stringify(bankOnly.data).slice(0, 80));
+    const delEntry = await call(OT, "DELETE", "/api/ledger/" + bankOnly.data.entry.id);
+    ok("käsitsi kande kustutamine jätab auditijälje",
+      delEntry.data.state.audit.some((x) => x.action === "kassakanne kustutatud"));
+
+    const kid = await call(OT, "POST", "/api/services", { name: "Laste lõikus", price: 20 });
+    const kidId = kid.data.service.id;
+    ok("UUS TEENUS ON KÕIGILE BARBERITELE AVATUD (varem kõigil läbi kriipsutatud)",
+      kid.status === 201 && kid.data.state.barbers.length > 0 &&
+        kid.data.state.barbers.every((b) => b.prices[kidId] && b.prices[kidId].offered && b.prices[kidId].price === 20),
+      JSON.stringify(kid.data.state.barbers.map((b) => b.prices[kidId])));
+
+    const ref = afterBack.data.state.invoices.find((i) => i.id === afterBack.data.invoice.id).reference;
+    const valid731 = (r) => {
+      const d = String(r).slice(0, -1), w = [7, 3, 1];
+      let sum = 0;
+      for (let i = 0; i < d.length; i++) sum += Number(d[d.length - 1 - i]) * w[i % 3];
+      return /^\d{2,20}$/.test(String(r)) && (10 - (sum % 10)) % 10 === Number(String(r).slice(-1));
+    };
+    ok("VIITENUMBRIL ON KEHTIV 7-3-1 KONTROLLNUMBER", valid731(ref), ref);
+
+    await call(OT, "PUT", "/api/settings", { vat_rate: 20 });
+    const vd = await call(BT, "POST", "/api/invoices", { lines: [hairLine] });
+    await call(OT, "PUT", "/api/settings", { vat_rate: 24 });
+    const vi = await call(BT, "POST", "/api/invoices/" + vd.data.invoice.id + "/issue", { payNow: true, cash: 35 });
+    ok("esitamisel kehtib tänane KM määr", Number(vi.data.invoice.vat_rate) === 24, vi.data.invoice && vi.data.invoice.vat_rate);
+    ok("vigane KM määr keelatud (400)", (await call(OT, "PUT", "/api/settings", { vat_rate: -5 })).status === 400);
+
+    const unpaid = await call(BT, "POST", "/api/invoices", { lines: [hairLine] });
+    await call(BT, "POST", "/api/invoices/" + unpaid.data.invoice.id + "/issue", { payNow: false });
+    await ready();
+    const { migrate } = require("../src/migrations");
+    await migrate({ log: () => {} });
+    const still = await query("SELECT status, paid_at FROM invoices WHERE id = $1", [unpaid.data.invoice.id]);
+    ok("TAASKÄIVITUS EI MÄRGI MAKSMATA ARVET MAKSTUKS",
+      still.rows[0].status === "esitatud" && still.rows[0].paid_at === null, JSON.stringify(still.rows[0]));
+    await call(OT, "POST", "/api/invoices/" + unpaid.data.invoice.id + "/cancel", { reason: "test" });
+    const unc = await call(OT, "POST", "/api/invoices/" + unpaid.data.invoice.id + "/uncancel", {});
+    ok("tühistamise tagasivõtt jätab maksmata arve maksmata",
+      unc.data.invoice.status === "esitatud" &&
+        !unc.data.state.ledger.some((e) => e.invoice_id === unpaid.data.invoice.id),
+      unc.data.invoice && unc.data.invoice.status);
+
+    const inMove = await call(OT, "POST", "/api/stock-movements", { productId: p2.id, type: "in", qty: 2 });
+    await call(BT, "POST", "/api/sales", { lines: [jar(5)], cash: 50, card: 0 });
+    ok("müüdud kauba sissetulekut ei saa kustutada (409, laoseis ei lähe miinusesse)",
+      (await call(OT, "DELETE", "/api/stock-movements/" + inMove.data.movement.id)).status === 409);
+
+    const raw = (method, path) => fetch(BASE + path, { method: method, redirect: "manual" });
+    const contact = await raw("POST", "/contact");
+    ok("KODULEHE KONTAKTIVORM JÕUAB PÄRIS POODI (307)",
+      contact.status === 307 && /fibarbers\.ee\/contact$/.test(contact.headers.get("location")),
+      contact.status + " " + contact.headers.get("location"));
+    const appPage = await raw("GET", "/app");
+    ok("/app kannab turvapoliitikat", /script-src 'self'/.test(appPage.headers.get("content-security-policy") || ""));
+    ok("/app/ suunab /app lehele (varem tuli CSS asemel HTML)", (await raw("GET", "/app/")).status === 301);
+    ok("/app.html ei möödu turvapoliitikast", (await raw("GET", "/app.html")).status === 301);
+  } catch (e) {
+    // An exception mid-run is a failure too — and it must be printed, since
+    // the finally below exits the process before any outer catch could.
+    fail++;
+    console.error("\nTESTI ENDA VIGA:", e);
   } finally {
     if (shopId) {
       await query("DELETE FROM users WHERE shop_id = $1 OR id = $1", [shopId]);
@@ -379,6 +520,7 @@ async function call(token, method, path, body) {
     console.log("\n==================================");
     console.log("  KORRAS: " + pass + "   VIGA: " + fail);
     console.log("==================================");
+    if (server) server.close();
     await pool.end();
     process.exit(fail ? 1 : 0);
   }

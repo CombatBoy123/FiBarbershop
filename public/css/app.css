@@ -133,9 +133,8 @@ a.navtab { text-decoration:none; }
 .btnp.wide { width:100%; text-align:center; }
 .del { background:transparent; border:none; color:var(--tx3); cursor:pointer; font-size:15px; line-height:1; }
 .del:hover { color:var(--neg); }
-/* The row expander. Deliberately NOT .del — that class means "remove this"
-   everywhere else in the app, and the barber add-on clicks the first .del it
-   finds in a line to drop that line. */
+/* The row expander. Not .del — that class means "remove this" everywhere
+   else in the app. */
 .dexp { background:transparent; border:none; color:var(--acc); cursor:pointer;
         font:400 12px/1 "IBM Plex Mono",monospace; padding:2px; }
 .dexp:hover { color:var(--accd); }
@@ -155,6 +154,20 @@ a.navtab { text-decoration:none; }
 .svc:focus-visible { outline:2px solid var(--acc); outline-offset:2px; }
 .svc.out { opacity:.45; cursor:not-allowed; }
 .svc.out:hover { border-color:var(--line); }
+/* A treatment the barber in the chair does not perform. */
+.svc.unavail { opacity:.45; cursor:not-allowed; }
+.svc.unavail:hover { border-color:var(--line); }
+.svc.unavail .svcn { text-decoration:line-through; }
+
+/* Who is in the chair: one button per barber above the service tiles. */
+.chair { display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin:0 0 14px;
+         padding:0 0 14px; border-bottom:1px solid var(--line2); }
+.chairs { display:flex; gap:6px; flex-wrap:wrap; }
+.chairbtn { border:1px solid var(--line); background:var(--card); color:var(--tx);
+            font:600 13px "IBM Plex Sans",sans-serif; padding:8px 12px; cursor:pointer; }
+.chairbtn:hover { border-color:var(--acc); }
+.chairbtn.on { border-color:var(--acc); background:var(--tint); color:var(--accd); }
+.chairbtn:focus-visible { outline:2px solid var(--acc); outline-offset:2px; }
 .svcn { font-family:Archivo, sans-serif; font-stretch:112%; font-weight:600; font-size:17px;
         line-height:20px; letter-spacing:-.02em; color:var(--tx); }
 .svcp { font:500 16px "IBM Plex Mono", monospace; font-variant-numeric:tabular-nums; color:var(--accd); }
@@ -210,6 +223,20 @@ a.navtab { text-decoration:none; }
               padding:10px 6px; cursor:pointer; }
 .seg button.on { border-color:var(--acc); background:var(--tint); color:var(--accd); }
 .err { font:500 13px "IBM Plex Sans",sans-serif; color:var(--neg); min-height:19px; }
+.dline.bad .inp:first-of-type { border-color:var(--neg); }
+.lab.hint { color:var(--tx3); font-weight:400; line-height:1.5; }
+.btnp.danger { background:var(--neg); color:#fff; }
+.btnp.danger:hover { background:#A83232; }
+
+/* The one modal (dialog.js). It lives inside .app so it follows the theme. */
+.dlg { border:1px solid var(--line); background:var(--panel); color:var(--tx); padding:0;
+       width:min(460px, calc(100vw - 32px)); max-height:calc(100vh - 32px); }
+.dlg::backdrop { background:rgba(10,14,18,.55); }
+.dlgform { display:flex; flex-direction:column; gap:12px; padding:22px; }
+.dlgtitle { font-family:Archivo,sans-serif; font-stretch:112%; font-weight:700; font-size:22px;
+            line-height:1.15; letter-spacing:-.02em; margin:0; color:var(--tx); }
+.dlgmsg p { font:400 14px/1.55 "IBM Plex Sans",sans-serif; color:var(--tx2); margin:0 0 8px; }
+.dlgacts { display:flex; gap:8px; justify-content:flex-end; flex-wrap:wrap; }
 
 /* KPI and tables */
 .kpi { background:var(--panel); padding:16px 18px; }

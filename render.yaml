@@ -16,8 +16,11 @@ services:
     runtime: node
     plan: free            # change to your current plan if it isn't free
     branch: main
-    buildCommand: npm install
+    buildCommand: npm ci
     startCommand: npm start
+    # Answers 200 only when the process is up AND the database responds, so a
+    # deploy that cannot reach Postgres is not switched live.
+    healthCheckPath: /healthz
     # The app reads process.env.PORT, which Render injects automatically,
     # so PORT does not need to be set here.
     envVars:
