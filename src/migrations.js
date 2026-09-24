@@ -316,15 +316,13 @@ const MIGRATIONS = [
 
   {
     id: 6,
-    name: "keep names on history when an account is deleted",
-    // Deleting an account removes the users row, and every invoice and audit
-    // row that pointed at it loses the link (ON DELETE SET NULL). The name is
-    // copied here first, so "who rang this up" and "who cancelled it" still
-    // have an answer after the person's login is gone.
-    sql: `
-      ALTER TABLE invoices  ADD COLUMN IF NOT EXISTS created_by_label TEXT NOT NULL DEFAULT '';
-      ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS actor_label      TEXT NOT NULL DEFAULT '';
-    `,
+    name: "keep the barber's name on invoices when an account is deleted",
+    // Deleting an account removes the users row, and every invoice that
+    // pointed at it loses the link (ON DELETE SET NULL). The name is copied
+    // here first, so an invoice still says who rang it up. The audit trail
+    // deliberately does not keep it: the shop wants a deleted person's name
+    // gone from the log.
+    sql: `ALTER TABLE invoices ADD COLUMN IF NOT EXISTS created_by_label TEXT NOT NULL DEFAULT '';`,
   },
 ];
 

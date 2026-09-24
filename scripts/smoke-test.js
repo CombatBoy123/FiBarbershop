@@ -221,10 +221,16 @@ async function call(token, method, path, body) {
     const lvInv = del.data.state.invoices.find((i) => i.id === lvSale.data.invoice.id);
     ok("tema arve jäi alles ja kannab tema nime", lvInv && lvInv.created_by_name === "Lahkuja",
       lvInv && lvInv.created_by_name);
-    ok("tema tühistamine auditijälges kannab tema nime",
-      del.data.state.audit.some((x) => x.action === "arve tühistatud" && x.actor_name === "Lahkuja"));
-    ok("kustutamine ise on auditijälges",
-      del.data.state.audit.some((x) => x.action === "konto kustutatud" && x.detail.indexOf(leaver.email) === 0));
+    const cancelLine = del.data.state.audit.find((x) => x.action === "arve tühistatud" &&
+      x.invoice_id === lvSale.data.invoice.id);
+    ok("TEMA LOGIREA JÄID ALLES, AGA ILMA NIMETA",
+      cancelLine && !cancelLine.actor_id && !cancelLine.actor_name && !cancelLine.actor_email,
+      JSON.stringify(cancelLine));
+    ok("LOGIS POLE KUSKIL TEMA E-POSTI",
+      !del.data.state.audit.some((x) => String(x.detail).includes(leaver.email)),
+      del.data.state.audit.filter((x) => String(x.detail).includes(leaver.email)).map((x) => x.action).join(", "));
+    ok("kustutamine ise on logis (ilma nimeta)",
+      del.data.state.audit.some((x) => x.action === "konto kustutatud" && x.detail === "barber"));
     ok("sama e-postiga saab uue konto teha",
       (await call(OT, "POST", "/api/staff", { ...leaver, role: "barber" })).status === 201);
     ok("iseennast ei saa kustutada (409)",

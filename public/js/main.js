@@ -539,7 +539,8 @@ const actions = {
     if (!(await confirmAsk("Kustutada konto " + user.email + "?",
       "Konto kustutatakse jäädavalt: sisselogimine lõpeb kohe ja seda ei saa tagasi võtta. " +
       "Sama e-postiga saab hiljem uue konto teha.\n\n" +
-      "Tema tehtud arved ja tegevused jäävad alles tema nimega.",
+      "Tema nimi eemaldatakse tegevuste logist (read jäävad, „Kes“ jääb tühjaks). " +
+      "Arvetel, mis ta tegi, jääb tema nimi alles.",
       { confirm: "Kustuta konto", danger: true }))) return;
     await write(() => api.removeStaff(user.id), { message: "Konto kustutatud: " + user.email });
   },

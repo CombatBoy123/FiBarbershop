@@ -74,8 +74,7 @@ async function loadState(shopId) {
       [shopId]
     ),
     query(
-      `SELECT a.*, COALESCE(u.name, NULLIF(a.actor_label, '')) AS actor_name, u.email AS actor_email,
-              i.nr AS invoice_nr
+      `SELECT a.*, u.name AS actor_name, u.email AS actor_email, i.nr AS invoice_nr
          FROM audit_log a
          LEFT JOIN users u ON u.id = a.actor_id
          LEFT JOIN invoices i ON i.id = a.invoice_id

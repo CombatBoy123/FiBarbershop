@@ -1337,8 +1337,8 @@ export function viewAdmin(actions) {
                         onclick: () => actions.addStaff(form) }, "Loo konto"),
           h("p", { class: "lab", style: "color:var(--tx3);font-weight:400;margin:12px 0 0;line-height:1.5" },
             "Anna parool töötajale edasi ja lase tal see ise ära vahetada. " +
-            "Konto kustutamine eemaldab sisselogimise jäädavalt; tema arved ja tegevused " +
-            "jäävad tema nimega alles.")
+            "Konto kustutamine eemaldab sisselogimise jäädavalt ja tema nime tegevuste logist. " +
+            "Arvetel jääb tema nimi alles.")
         )
       ),
 
