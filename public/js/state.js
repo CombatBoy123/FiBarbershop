@@ -55,7 +55,7 @@ export const isOwner = () => !S.me || S.me.role === "omanik";
 // The parts of the app an owner can switch on and off per account, under
 // Kontod. Mirrors the list in src/auth.js; the server decides, this is only
 // what the screen draws.
-export const AREAS = ["cust", "price", "cash", "stock", "admin"];
+export const AREAS = ["cust", "price", "cash", "stock", "admin", "void"];
 
 export const AREA_LABEL = {
   cust: "Kliendid",
@@ -63,11 +63,12 @@ export const AREA_LABEL = {
   cash: "Kassaraamat",
   stock: "Ladu",
   admin: "Kontod",
+  void: "Arvete kustutamine",
 };
 
 // Kliendid stays on for a barber nobody has configured, because barbers had it
-// before these switches existed.
-const DEFAULT_PERMS = { cust: true, price: false, cash: false, stock: false, admin: false };
+// before these switches existed; cancelling and deleting invoices is on too.
+const DEFAULT_PERMS = { cust: true, price: false, cash: false, stock: false, admin: false, void: true };
 
 // What THIS account may reach. The server sends `can` already resolved, so the
 // rules live in one place; the fallback below only covers the moment between

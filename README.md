@@ -74,7 +74,9 @@ public/
   out on credit.
 * **Pay** (`POST /api/invoices/:id/pay`): a credit invoice reaches the cash
   book when the money arrives.
-* **Cancel / un-cancel / delete for good**: owner only, all audited.
+* **Cancel / un-cancel / delete for good**: every barber can, unless the owner
+  switches "Arvete kustutamine" off for that account under Kontod. All audited
+  with who did it. Marking an invoice paid stays with the owner.
 
 Invoice numbers are `MMYY-NNN`: the month's highest issued number plus one,
 minted under a row lock on the shop's settings. Stock is checked per product

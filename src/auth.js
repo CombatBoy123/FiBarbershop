@@ -13,9 +13,10 @@ const TOKEN_TTL = "30d";
 // the column allows it, but nothing grants it until there is someone to be it.
 const ROLES = ["omanik", "barber"];
 
-// The parts of the app that can be handed out per account. The keys match the
-// nav tabs, so a permission and the screen it opens share one name.
-const AREAS = ["cust", "price", "cash", "stock", "admin"];
+// The parts of the app that can be handed out per account. Most keys match a
+// nav tab, so a permission and the screen it opens share one name. `void` is
+// not a screen: it is cancelling and deleting issued invoices under Arved.
+const AREAS = ["cust", "price", "cash", "stock", "admin", "void"];
 
 const AREA_LABEL = {
   cust: "Kliendid",
@@ -23,12 +24,15 @@ const AREA_LABEL = {
   cash: "Kassaraamat",
   stock: "Ladu",
   admin: "Kontod",
+  void: "Arvete kustutamine",
 };
 
 // What a barber gets on an account nobody has configured. Kliendid stays on
 // because barbers already had it before these switches existed — defaulting it
-// off would have silently changed how the shop works.
-const DEFAULT_PERMS = { cust: true, price: false, cash: false, stock: false, admin: false };
+// off would have silently changed how the shop works. Cancelling and deleting
+// invoices is on because the shop wants every barber able to take back a sale
+// they rang up wrong; the owner can switch it off per account.
+const DEFAULT_PERMS = { cust: true, price: false, cash: false, stock: false, admin: false, void: true };
 
 // An owner always has everything: the switches describe what a barber may
 // reach, and an owner who could be locked out of their own books would be a

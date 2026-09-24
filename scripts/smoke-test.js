@@ -73,6 +73,7 @@ async function call(token, method, path, body) {
     ok("barber näeb sama hinnakirja (mitte tühja salongi)",
       sb.data && so.data && sb.data.services.length === so.data.services.length);
     ok("roll jõuab kliendini", sb.data.me.role === "barber", sb.data.me && sb.data.me.role);
+    ok("barber saab vaikimisi arveid kustutada", sb.data.me.can.void === true, JSON.stringify(sb.data.me.can));
 
     const svc = so.data.services[0];
     const prod = so.data.products.find((p) => p.stock > 0) || so.data.products[0];
@@ -142,8 +143,25 @@ async function call(token, method, path, body) {
       led && "bank=" + led.bank + " cash=" + led.cash);
 
     console.log("\n4. Õigused");
-    const bCancel = await call(BT, "POST", "/api/invoices/" + inv1.id + "/cancel", { reason: "test" });
-    ok("BARBER EI SAA ARVET TÜHISTADA (403)", bCancel.status === 403, bCancel.status);
+    // Every barber may cancel and delete invoices unless the owner switches
+    // "Arvete kustutamine" off for them.
+    const own = await call(BT, "POST", "/api/sales", {
+      lines: [{ serviceId: svc.id, name: "Barberi enda viga", qty: 1, price: 10 }], cash: 10, card: 0,
+    });
+    const bCancel = await call(BT, "POST", "/api/invoices/" + own.data.invoice.id + "/cancel", { reason: "Vale hind" });
+    ok("BARBER SAAB ARVE TÜHISTADA", bCancel.status === 200, bCancel.status + " " + JSON.stringify(bCancel.data).slice(0, 100));
+    ok("barber saab tühistamise tagasi võtta",
+      (await call(BT, "POST", "/api/invoices/" + own.data.invoice.id + "/uncancel", {})).status === 200);
+    const bPurge = await call(BT, "DELETE", "/api/invoices/" + own.data.invoice.id + "/permanent");
+    ok("BARBER SAAB ARVE JÄÄDAVALT KUSTUTADA", bPurge.status === 200, bPurge.status);
+    ok("barberi kustutamine jääb auditijälge tema nimel",
+      bPurge.data.state.audit.some((x) => x.action === "arve kustutatud jäädavalt" && x.actor_id === made.barber.id));
+    await call(OT, "PUT", "/api/staff/" + made.barber.id + "/permissions", { permissions: { cust: true, void: false } });
+    ok("LÜLITI VÄLJAS -> barber ei saa tühistada (403)",
+      (await call(BT, "POST", "/api/invoices/" + inv1.id + "/cancel", { reason: "test" })).status === 403);
+    ok("lüliti väljas -> barber ei saa jäädavalt kustutada (403)",
+      (await call(BT, "DELETE", "/api/invoices/" + inv1.id + "/permanent")).status === 403);
+    await call(OT, "PUT", "/api/staff/" + made.barber.id + "/permissions", { permissions: { cust: true, void: true } });
     ok("barber ei saa hinnakirja muuta",
       (await call(BT, "PUT", "/api/services/" + svc.id, { price: 1 })).status === 403);
     ok("barber ei saa seadeid muuta",
@@ -245,8 +263,8 @@ async function call(token, method, path, body) {
     const b2 = await mkSale("Kustutustest B");
     ok("kaks jarjestikust numbrit", seq(b2.nr) === seq(a.nr) + 1, a.nr + " -> " + b2.nr);
 
-    ok("barber ei saa jaadavalt kustutada (403)",
-      (await call(BT, "DELETE", "/api/invoices/" + a.id + "/permanent")).status === 403);
+    ok("barber ei saa arvet makstuks märkida (403)",
+      (await call(BT, "POST", "/api/invoices/" + a.id + "/pay", {})).status === 403);
 
     // Kuu keskelt, ilma eelneva tuhistamiseta: lubatud, aga jatab augu ja
     // peab kassakande ise ara koristama.

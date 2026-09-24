@@ -9,7 +9,7 @@ import {
   S, draftVat, paymentMismatch, draftProblem, draftTotal, METHOD_LABEL, UNITS,
   ledgerWithBalance, ledgerTotals, ledgerMonths, dayFigures, stockValue, lowStock, lowLimit,
   stockStatus, isCancelled, lineTotal, isDraft, isUnpaid, statusLabel, unpaidInvoices, unpaidTotal,
-  isOwner, pastBuyers, AREAS, AREA_LABEL, permsOf,
+  isOwner, can, pastBuyers, AREAS, AREA_LABEL, permsOf,
   myBarber, barberById, barberPrice, activeBarber, lockedBarber, tileFor,
   monthlyByBarber, invoiceMonths,
 } from "./state.js";
@@ -505,16 +505,18 @@ export function viewInvoices(actions) {
     );
   }
 
-  if (selected && !isDraft(selected) && isOwner()) {
+  // Cancelling and deleting follow the "Arvete kustutamine" switch, which
+  // every barber has unless the owner turned it off.
+  if (selected && !isDraft(selected) && can("void")) {
     acts.push(
       isCancelled(selected)
         ? h("button", { class: "btng", type: "button",
                         onclick: () => actions.uncancelInvoice(selected) }, "Võta tühistamine tagasi")
         : h("button", { class: "btng", type: "button",
                         onclick: () => actions.cancelInvoice(selected) }, "Tühista arve"),
-      // The owner's delete. Offered on any issued invoice, cancelled or not —
-      // the warning about the gap it may leave belongs in the confirmation,
-      // not in a button that quietly refuses to appear.
+      // Offered on any issued invoice, cancelled or not — the warning about
+      // the gap it may leave belongs in the confirmation, not in a button that
+      // quietly refuses to appear.
       h("button", { class: "btng", type: "button",
                     onclick: () => actions.purgeInvoice(selected) }, "Kustuta jäädavalt")
     );
@@ -530,9 +532,10 @@ export function viewInvoices(actions) {
         owedBanner,
         table("1fr auto", ["Arve", { label: "Summa", r: true }], rows, "Arveid veel pole."),
         h("p", { class: "lab", style: "color:var(--tx3);font-weight:400;margin:12px 0 0;line-height:1.5" },
-          isOwner()
+          can("void")
             ? "Arve avaneb kõrval A4 lehena. Trüki / PDF saadab printi ainult lehe, ilma liideseta."
-            : "Arve avaneb kõrval A4 lehena. Esitatud arve tühistamine on omaniku õigus.")
+            : "Arve avaneb kõrval A4 lehena. Esitatud arvete tühistamine ja kustutamine " +
+              "ei ole sinu kontole lubatud.")
       ),
       selected
         ? h("div", { class: "stack" },
@@ -1288,8 +1291,9 @@ export function viewAdmin(actions) {
           h("p", { class: "lab", style: "color:var(--tx3);font-weight:400;margin:10px 0 0;line-height:1.5" },
             "Lüliti peidab vahekaardi ja keelab ka serveris — lingi käsitsi tippimine ei aita. " +
             "Töölaud, Kiirmüük ja Arved jäävad kõigile: see on töö ise. " +
-            "Arvete tühistamine, kustutamine ja makstuks märkimine ning kontode haldus " +
-            "jäävad alati ainult omanikule, ka siis kui Kontod on kellelegi lubatud.")
+            "Arvete kustutamine (tühistamine ja jäädav kustutamine) on barberitel vaikimisi sees. " +
+            "Arve makstuks märkimine ning kontode haldus jäävad alati ainult omanikule, " +
+            "ka siis kui Kontod on kellelegi lubatud.")
         ),
 
         panel({},
@@ -1319,7 +1323,7 @@ export function viewAdmin(actions) {
               type: "password", autocomplete: "new-password",
               oninput: (e) => (form.password = e.target.value) })),
             field("Roll", select({ onchange: (e) => (form.role = e.target.value) },
-              [{ value: "barber", label: "Barber — koostab arveid, ei tühista" },
+              [{ value: "barber", label: "Barber — kassa ja arved, muu lülititega" },
                { value: "omanik", label: "Omanik — kõik õigused" }], form.role))
           ),
           h("button", { class: "btnp wide", type: "button", style: "margin-top:12px",
