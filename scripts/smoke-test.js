@@ -202,6 +202,42 @@ async function call(token, method, path, body) {
     const self = await call(OT, "PUT", "/api/staff/" + made.owner.id, { role: "barber" });
     ok("omanik ei saa iseennast alandada (409)", self.status === 409, self.status);
 
+    // Deleting an account removes the login for good, but not its history.
+    const leaver = { email: "lahkuja-" + Date.now() + "@example.invalid", password: "lahkuja-parool-1" };
+    const lv = await call(OT, "POST", "/api/staff", { ...leaver, name: "Lahkuja", role: "barber" });
+    const LT = (await call(null, "POST", "/api/login", leaver)).data.token;
+    const lvSale = await call(LT, "POST", "/api/sales", {
+      lines: [{ serviceId: svc.id, name: "Lahkuja lõikus", qty: 1, price: 10 }], cash: 10, card: 0,
+    });
+    await call(LT, "POST", "/api/invoices/" + lvSale.data.invoice.id + "/cancel", { reason: "Lahkuja test" });
+    const del = await call(OT, "DELETE", "/api/staff/" + lv.data.user.id);
+    ok("KONTO KUSTUTAMINE ÕNNESTUB", del.status === 200, del.status + " " + JSON.stringify(del.data).slice(0, 100));
+    const gone = await query("SELECT 1 FROM users WHERE id = $1", [lv.data.user.id]);
+    ok("KONTO ON ANDMEBAASIST PÄRISELT KADUNUD", gone.rowCount === 0);
+    ok("kustutatud konto ei ole töötajate nimekirjas", !del.data.state.staff.some((u) => u.id === lv.data.user.id));
+    ok("kustutatud konto sessioon ei tööta (401)", (await call(LT, "GET", "/api/bootstrap")).status === 401);
+    ok("kustutatud kontoga ei saa sisse logida (401)",
+      (await call(null, "POST", "/api/login", leaver)).status === 401);
+    const lvInv = del.data.state.invoices.find((i) => i.id === lvSale.data.invoice.id);
+    ok("tema arve jäi alles ja kannab tema nime", lvInv && lvInv.created_by_name === "Lahkuja",
+      lvInv && lvInv.created_by_name);
+    const cancelLine = del.data.state.audit.find((x) => x.action === "arve tühistatud" &&
+      x.invoice_id === lvSale.data.invoice.id);
+    ok("TEMA LOGIREA JÄID ALLES, AGA ILMA NIMETA",
+      cancelLine && !cancelLine.actor_id && !cancelLine.actor_name && !cancelLine.actor_email,
+      JSON.stringify(cancelLine));
+    ok("LOGIS POLE KUSKIL TEMA E-POSTI",
+      !del.data.state.audit.some((x) => String(x.detail).includes(leaver.email)),
+      del.data.state.audit.filter((x) => String(x.detail).includes(leaver.email)).map((x) => x.action).join(", "));
+    ok("kustutamine ise on logis (ilma nimeta)",
+      del.data.state.audit.some((x) => x.action === "konto kustutatud" && x.detail === "barber"));
+    ok("sama e-postiga saab uue konto teha",
+      (await call(OT, "POST", "/api/staff", { ...leaver, role: "barber" })).status === 201);
+    ok("iseennast ei saa kustutada (409)",
+      (await call(OT, "DELETE", "/api/staff/" + made.owner.id)).status === 409);
+    ok("barber ei saa kontot kustutada (403)",
+      (await call(BT, "DELETE", "/api/staff/" + staff.data.user.id)).status === 403);
+
     const cust = await call(OT, "POST", "/api/customers", { name: "Metsa Ehitus OÜ", details: "14785236" });
     ok("kliendi lisamine", cust.status === 201, JSON.stringify(cust.data).slice(0, 140));
     const cId = cust.data.customer.id;
@@ -356,6 +392,15 @@ async function call(token, method, path, body) {
     // Muudatus kehtib kohe, mitte tokeni eluea taga: konto rida loetakse igal paringul.
     ok("vana token tunneb uut oigust kohe",
       (await call(BT, "PUT", "/api/services/" + svc.id, { price: 34 })).status === 200);
+
+    // A page loaded before a switch existed sends a map without it. That
+    // must not turn the switch off.
+    await call(OT, "PUT", "/api/staff/" + made.barber.id + "/permissions", { permissions: { void: true } });
+    await call(OT, "PUT", "/api/staff/" + made.barber.id + "/permissions",
+      { permissions: { cust: true, price: false, cash: false, stock: false, admin: false } });
+    const after = await meOf(BT);
+    ok("SAATMATA LÜLITI JÄÄB NAGU OLI (vana leht ei lülita arvete kustutamist välja)",
+      after.can.void === true && after.can.cust === true, JSON.stringify(after.can));
     console.log("\n10. Barberite hinnad");
     const boot2 = (await call(OT, "GET", "/api/bootstrap")).data;
     ok("uus salong sai barberid kaasa", boot2.barbers.length === 5, boot2.barbers.length);

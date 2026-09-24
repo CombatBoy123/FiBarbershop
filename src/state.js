@@ -27,7 +27,9 @@ async function loadState(shopId) {
     // Drafts have no date-ordered place in the sequence yet, so they sort to
     // the top — they are the thing being worked on right now.
     query(
-      `SELECT i.*, u.name AS created_by_name, u.email AS created_by_email
+      `SELECT i.*,
+              COALESCE(u.name, u.email, NULLIF(i.created_by_label, '')) AS created_by_name,
+              u.email AS created_by_email
          FROM invoices i
          LEFT JOIN users u ON u.id = i.created_by
         WHERE i.user_id = $1

@@ -1195,7 +1195,7 @@ export function viewCustomers(actions) {
 export function viewAdmin(actions) {
   const form = { name: "", email: "", password: "", role: "barber" };
 
-  const grid = "1fr 1.2fr 100px 100px 108px 150px";
+  const grid = "1fr 1.2fr 100px 118px 108px 150px";
 
   const staffRows = S.staff.map((u) =>
     h("div", { class: "row", style: "grid-template-columns:" + grid },
@@ -1206,13 +1206,20 @@ export function viewAdmin(actions) {
         : select({ "aria-label": "Roll: " + u.email, onchange: (e) => actions.setStaffRole(u, e.target.value) },
                   [{ value: "barber", label: "barber" }, { value: "omanik", label: "omanik" }],
                   u.role),
+      // Deleting is for barbers. An owner is demoted first, which keeps one
+      // click from removing someone who can manage everyone else.
       u.id === (S.me && S.me.id)
         ? h("span", { class: "thr", text: "sina" })
-        : u.active
-          ? h("button", { class: "btng sm", type: "button",
-                          onclick: () => actions.closeStaff(u) }, "Sulge konto")
-          : h("button", { class: "btng sm", type: "button",
-                          onclick: () => actions.reopenStaff(u) }, "Taasava"),
+        : u.role === "omanik"
+          ? h("span", { class: "thr", title: "Kustutamiseks muuda roll enne barberiks", text: "—" })
+          : h("div", { style: "display:flex;flex-direction:column;gap:4px" },
+              // Accounts closed before deleting existed can still be let back in.
+              u.active
+                ? null
+                : h("button", { class: "btng sm", type: "button",
+                                onclick: () => actions.reopenStaff(u) }, "Taasava"),
+              h("button", { class: "btng sm", type: "button",
+                            onclick: () => actions.deleteStaff(u) }, "Kustuta konto")),
       // The forgotten-password case. The owner sets a new one; the old is
       // replaced, never revealed.
       u.id === (S.me && S.me.id)
@@ -1330,7 +1337,8 @@ export function viewAdmin(actions) {
                         onclick: () => actions.addStaff(form) }, "Loo konto"),
           h("p", { class: "lab", style: "color:var(--tx3);font-weight:400;margin:12px 0 0;line-height:1.5" },
             "Anna parool töötajale edasi ja lase tal see ise ära vahetada. " +
-            "Konto sulgemine ei kustuta midagi — arved jäävad tema nimele alles.")
+            "Konto kustutamine eemaldab sisselogimise jäädavalt ja tema nime tegevuste logist. " +
+            "Arvetel jääb tema nimi alles.")
         )
       ),
 

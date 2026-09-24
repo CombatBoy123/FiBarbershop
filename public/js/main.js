@@ -533,12 +533,16 @@ const actions = {
     await write(() => api.updateStaff(user.id, { role }), { reset: true, message: "Roll salvestatud." });
   },
 
-  // Closed, never deleted: invoices point at their creator.
-  async closeStaff(user) {
-    if (!(await confirmAsk("Sulgeda konto " + user.email + "?",
-      "Ta ei saa enam sisse logida ja tema avatud sessioonid lõpetatakse. Tema arved jäävad alles.",
-      { confirm: "Sulge konto", danger: true }))) return;
-    await write(() => api.removeStaff(user.id), { message: "Konto suletud." });
+  // Deleted for good. The invoices and log entries this person made keep
+  // their name; only the login goes.
+  async deleteStaff(user) {
+    if (!(await confirmAsk("Kustutada konto " + user.email + "?",
+      "Konto kustutatakse jäädavalt: sisselogimine lõpeb kohe ja seda ei saa tagasi võtta. " +
+      "Sama e-postiga saab hiljem uue konto teha.\n\n" +
+      "Tema nimi eemaldatakse tegevuste logist (read jäävad, „Kes“ jääb tühjaks). " +
+      "Arvetel, mis ta tegi, jääb tema nimi alles.",
+      { confirm: "Kustuta konto", danger: true }))) return;
+    await write(() => api.removeStaff(user.id), { message: "Konto kustutatud: " + user.email });
   },
 
   async reopenStaff(user) {

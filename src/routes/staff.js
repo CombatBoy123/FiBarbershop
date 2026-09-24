@@ -13,7 +13,7 @@ const router = express.Router();
 
 async function getStaff(client, shopId, staffId) {
   const r = await client.query(
-    "SELECT id, email, name, role, active FROM users WHERE id = $2 AND shop_id = $1 FOR UPDATE",
+    "SELECT id, email, name, role, active, permissions FROM users WHERE id = $2 AND shop_id = $1 FOR UPDATE",
     [shopId, staffId]
   );
   if (!r.rowCount) throw httpError(404, "Kontot ei leitud.");
@@ -106,12 +106,12 @@ router.put(
   ownerOnly,
   wrap(async (req, res) => {
     const staffId = paramId(req);
-    const perms = cleanPermissions(req.body.permissions);
     const user = await withTransaction(async (client) => {
       const cur = await getStaff(client, req.shopId, staffId);
       if (cur.role === "omanik") {
         throw httpError(409, "Omanikul on alati kõik õigused. Piiramiseks muuda roll enne barberiks.");
       }
+      const perms = cleanPermissions(req.body.permissions, cur.permissions);
       const r = await client.query(
         `UPDATE users SET permissions = $3 WHERE id = $2 AND shop_id = $1
          RETURNING id, email, name, role, active, permissions, created_at`,
@@ -125,22 +125,45 @@ router.put(
   })
 );
 
-// Switched off, never deleted: invoices point at their creator, and a barber
-// who leaves should not erase who rang up last year's sales.
+// Delete an account for good: the login, the email and the password hash are
+// gone, the email is free to be used again, and any open session of it stops
+// working at its next request (the row it would load no longer exists).
+//
+// What the person did stays on the books, but their name leaves the log: the
+// log lines they made stay with "Kes" empty, and lines about the account
+// (created, password reset, permissions) have their email taken out. Invoices
+// they rang up keep their name, copied onto the invoice before the row goes.
+// A chair linked to the account is simply unlinked.
+//
+// Not yourself, not the account the shop was created with, and not another
+// owner without demoting them first: one click should not remove someone who
+// can manage everyone else.
 router.delete(
   "/staff/:id",
   ownerOnly,
   wrap(async (req, res) => {
     const staffId = paramId(req);
-    if (staffId === req.userId) return res.status(409).json({ error: "Iseennast ei saa sulgeda." });
+    if (staffId === req.userId) return res.status(409).json({ error: "Iseennast ei saa kustutada." });
     await withTransaction(async (client) => {
       const cur = await getStaff(client, req.shopId, staffId);
-      assertNotFounder(req, cur, "sulgeda");
+      assertNotFounder(req, cur, "kustutada");
+      if (cur.role === "omanik") {
+        throw httpError(409, "Omaniku kontot ei saa kustutada. Muuda roll enne barberiks.");
+      }
+      await client.query("UPDATE invoices SET created_by_label = $2 WHERE created_by = $1", [
+        staffId, cur.name || cur.email,
+      ]);
+      // The whole address only: deleting jax@fi.ee must not touch ajax@fi.ee.
+      const whole = "(^|[^[:alnum:]._%+-])" + cur.email.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") +
+        "($|[^[:alnum:]._-])";
       await client.query(
-        "UPDATE users SET active = false, pw_changed_at = $3 WHERE id = $2 AND shop_id = $1",
-        [req.shopId, staffId, new Date()]
+        "UPDATE audit_log SET detail = regexp_replace(detail, $2, '\\1kustutatud konto\\2', 'g') " +
+          "WHERE shop_id = $1 AND detail ~ $2",
+        [req.shopId, whole]
       );
-      await audit(client, req.shopId, req.userId, "konto muudetud", null, cur.email + " · suletud");
+      // actor_id on their own log lines is cleared by the foreign key.
+      await client.query("DELETE FROM users WHERE id = $2 AND shop_id = $1", [req.shopId, staffId]);
+      await audit(client, req.shopId, req.userId, "konto kustutatud", null, cur.role);
     });
     await sendState(req, res, { ok: true });
   })

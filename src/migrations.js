@@ -313,6 +313,17 @@ const MIGRATIONS = [
     // barber whose login leaked left the leaked session working for a month.
     sql: `ALTER TABLE users ADD COLUMN IF NOT EXISTS pw_changed_at TIMESTAMPTZ;`,
   },
+
+  {
+    id: 6,
+    name: "keep the barber's name on invoices when an account is deleted",
+    // Deleting an account removes the users row, and every invoice that
+    // pointed at it loses the link (ON DELETE SET NULL). The name is copied
+    // here first, so an invoice still says who rang it up. The audit trail
+    // deliberately does not keep it: the shop wants a deleted person's name
+    // gone from the log.
+    sql: `ALTER TABLE invoices ADD COLUMN IF NOT EXISTS created_by_label TEXT NOT NULL DEFAULT '';`,
+  },
 ];
 
 // Several instances booting at once (a Render deploy overlaps the old one)

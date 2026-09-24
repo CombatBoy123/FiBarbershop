@@ -47,9 +47,20 @@ function canArea(user, area) {
 
 // Whatever arrives in the request body, what lands in the column is a clean
 // map of the known keys as real booleans.
-function cleanPermissions(input) {
+//
+// Only the switches the request names are changed; the rest keep what the
+// account already had (or the default). A page loaded before a switch existed
+// sends a map without it, and that must not quietly turn the switch off —
+// which is how a barber lost "Arvete kustutamine" when Kliendid was ticked
+// from a tab still running the previous version.
+function cleanPermissions(input, current) {
+  const has = (o, k) => Boolean(o) && Object.prototype.hasOwnProperty.call(o, k);
   const out = {};
-  for (const area of AREAS) out[area] = Boolean(input && input[area]);
+  for (const area of AREAS) {
+    out[area] = has(input, area) ? Boolean(input[area])
+      : has(current, area) ? Boolean(current[area])
+      : Boolean(DEFAULT_PERMS[area]);
+  }
   return out;
 }
 
