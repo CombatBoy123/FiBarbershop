@@ -21,8 +21,10 @@ export const S = {
   audit: [],
   selectedInvoiceId: null,
   selectedCustomerId: null,
-  selectedBarberId: null,
+  selectedBarberId: null,  // whose prices Hinnakiri shows
+  activeBarberId: null,    // who is in the chair at the till
   reportMonth: null,
+  ledgerMonth: null,       // null = the current month
 
   // the sale being rung up
   draft: {
@@ -105,7 +107,6 @@ export function applyState(data) {
   S.barbers = data.barbers || [];
   S.audit = data.audit || [];
   if (data.me) S.me = data.me;
-  publishBarbers();
   if (S.selectedInvoiceId && !S.invoices.some((i) => i.id === S.selectedInvoiceId)) {
     S.selectedInvoiceId = null;
   }
@@ -136,36 +137,71 @@ export function myBarber() {
   return S.barbers.find((b) => b.account_id === S.me.id) || null;
 }
 
-// Hand the barber picker add-on the database's version of this list, in the
-// shape it already expects. Without this the add-on falls back to the five
-// barbers hard-coded inside it, and a price edited under Hinnakiri would never
-// reach the till.
-export function publishBarbers() {
-  if (typeof window === "undefined") return;
-  // A barber's account is tied to one chair. Publishing only their own profile
-  // is what stops them ringing a sale up under someone else's name and price —
-  // the picker has nothing else in it to choose. An owner keeps the full list,
-  // because building the week's consolidated invoice means moving between them.
-  const mine = myBarber();
-  const visible = !isOwner() && mine ? [mine] : S.barbers;
+// ---------------------------------------------------------- at the chair
+//
+// Who is cutting decides the price on a service line and whether the service
+// can be rung up at all. This used to live in a separate add-on script that
+// read the till's DOM, guessed which service was which by matching words
+// like "habe" in its name, and rewrote prices by firing fake input events —
+// so a new "Laste lõikus" got the adult haircut price, and the chosen barber
+// was forgotten on every reload. It is now ordinary state, priced by service
+// id from the barber_prices table.
+
+const BARBER_KEY = "fi_barber";
+
+export function restoreActiveBarber() {
   try {
-    window.fiBarbers = visible.map((b, i) => ({
-      id: b.slug,
-      displayName: b.name,
-      tier: b.tier || "",
-      phone: b.phone || null,
-      isDefault: i === 0,
-      services: S.services
-        .filter((s) => barberPrice(b, s).offered)
-        .map((s) => ({
-          name: s.name,
-          price: { type: "fixed", amount: barberPrice(b, s).price },
-          isAddOn: false,
-        })),
-    }));
+    const saved = Number(localStorage.getItem(BARBER_KEY));
+    if (saved) S.activeBarberId = saved;
   } catch (e) {
-    /* the add-on keeps its own list */
+    /* storage blocked; the first barber is used */
   }
+}
+
+export function setActiveBarber(id) {
+  S.activeBarberId = id;
+  try {
+    localStorage.setItem(BARBER_KEY, String(id));
+  } catch (e) {
+    /* remembered for this visit only */
+  }
+}
+
+// A barber's login tied to a chair only ever rings up under that name: the
+// picker is not offered to them at all.
+export function lockedBarber() {
+  return !isOwner() && myBarber() ? myBarber() : null;
+}
+
+export function activeBarber() {
+  if (!S.barbers.length) return null;
+  return lockedBarber() || barberById(S.activeBarberId) || S.barbers[0];
+}
+
+// What the tile for this service shows right now: the chair's price, and
+// whether that barber performs it. With no barbers set up, the shop's own
+// price list is the till.
+export function tileFor(service) {
+  const b = activeBarber();
+  if (!b) return { price: Number(service.price), offered: true };
+  return barberPrice(b, service);
+}
+
+// One tap on a service tile, as the line it becomes. The price is, in order:
+// what this customer has been promised, what this barber charges, what the
+// shop charges. The barber's name goes on as the line's description, so a
+// second barber's haircuts stay a row of their own on a consolidated invoice.
+export function serviceLine(service) {
+  const b = activeBarber();
+  const c = customerById(S.draft.customerId);
+  const agreed = c && c.prices ? c.prices[service.id] : undefined;
+  return {
+    serviceId: service.id,
+    barberId: b ? b.id : null,
+    name: service.name,
+    price: agreed !== undefined ? Number(agreed) : tileFor(service).price,
+    note: b ? b.name : "",
+  };
 }
 
 // What each barber brought in over one month. Built from the invoice lines
@@ -254,6 +290,7 @@ export function addLine(line) {
   const existing = S.draft.lines.find(
     (l) =>
       l.productId === (line.productId == null ? null : line.productId) &&
+      l.barberId === (line.barberId == null ? null : line.barberId) &&
       l.name === line.name &&
       (l.note || "") === note &&
       Number(l.price) === (Number(line.price) || 0) &&
@@ -390,6 +427,17 @@ export function draftVat() {
   return { net: net, vat: Math.round((gross - net) * 100) / 100, rate };
 }
 
+// Anything that would make the server refuse the invoice, caught before the
+// button is pressed rather than after.
+export function draftProblem() {
+  if (!S.draft.lines.length) return "";
+  const bad = S.draft.lines.find((l) => !(Number(l.qty) > 0));
+  if (bad) return "Real \u201e" + bad.name + "\u201c on kogus null.";
+  const unnamed = S.draft.lines.find((l) => !String(l.name || "").trim());
+  if (unnamed) return "Ühel real puudub nimi.";
+  return "";
+}
+
 export function paymentMismatch() {
   // Nothing to reconcile on a credit invoice: the money is expected later, so
   // zero entered against a positive total is correct rather than an error.
@@ -423,9 +471,23 @@ export const entryAmount = (e) => {
   return e.kind === "tulu" ? gross : -gross;
 };
 
-export function ledgerTotals() {
+// Months that have cash-book entries, newest first, always including this one.
+export function ledgerMonths() {
+  const set = new Set(S.ledger.map((e) => String(e.entry_date).slice(0, 7)));
+  set.add(todayISO().slice(0, 7));
+  return [...set].sort().reverse();
+}
+
+// Totals for one month ('YYYY-MM'), or for the whole book when month is
+// empty. The balance is always the running balance at the end of that month —
+// the cash in the drawer does not reset on the first of the month.
+export function ledgerTotals(month) {
   let cashIn = 0, cardIn = 0, bankIn = 0, out = 0;
-  for (const e of S.ledger) {
+  const inMonth = (e) => !month || String(e.entry_date).slice(0, 7) === month;
+  const upTo = (e) => !month || String(e.entry_date).slice(0, 7) <= month;
+  let closing = 0;
+  for (const e of S.ledger) if (upTo(e)) closing += entryAmount(e);
+  for (const e of S.ledger.filter(inMonth)) {
     const cash = Number(e.cash || 0), card = Number(e.card || 0), bank = Number(e.bank || 0);
     if (e.kind === "tulu") { cashIn += cash; cardIn += card; bankIn += bank; }
     else out += cash + card + bank;
@@ -437,7 +499,7 @@ export function ledgerTotals() {
     cardIn: r(cardIn),
     bankIn: r(bankIn),
     out: r(out),
-    balance: r(opening + cashIn + cardIn + bankIn - out),
+    balance: r(opening + closing),
   };
 }
 
@@ -507,13 +569,17 @@ export function stockValue() {
   return Math.round(S.products.reduce((s, p) => s + Number(p.stock || 0) * Number(p.cost || 0), 0) * 100) / 100;
 }
 
+export const lowLimit = () => Number(S.settings && S.settings.low_stock != null ? S.settings.low_stock : 3);
+
+// A limit of 0 is a real setting ("warn only when it is gone"); the old
+// `|| 3` turned it back into 3.
 export function lowStock() {
-  const limit = Number((S.settings && S.settings.low_stock) || 3);
+  const limit = lowLimit();
   return S.products.filter((p) => Number(p.stock || 0) <= limit);
 }
 
 export function stockStatus(product) {
-  const limit = Number((S.settings && S.settings.low_stock) || 3);
+  const limit = lowLimit();
   const qty = Number(product.stock || 0);
   if (qty <= 0) return { label: "Otsas", cls: "neg" };
   if (qty <= limit) return { label: "Telli juurde", cls: "warnc" };

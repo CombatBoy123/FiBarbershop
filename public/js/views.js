@@ -2,18 +2,24 @@
 // Views read from state.js and call back into the `actions` object that
 // main.js passes in; they never talk to the server themselves.
 
-import { h, panel, eur, num, signed, dateET, dayMonth, todayISO, monthLabel, parseNum } from "./util.js";
-
-// Mirrors the list the server offers; either side may be extended freely.
-const LEDGER_CATEGORIES = ["Teenuste müük", "Kaubamüük", "Kaubavaru", "Rent", "Töövahendid", "Palk"];
 import {
-  S, draftVat, paymentMismatch, draftTotal, METHOD_LABEL, UNITS,
-  ledgerWithBalance, ledgerTotals, dayFigures, stockValue, lowStock, stockStatus, isCancelled,
-  lineTotal, isDraft, isUnpaid, statusLabel, unpaidInvoices, unpaidTotal,
-  isOwner, pastBuyers, customerById,
-  AREAS, AREA_LABEL, permsOf,
-  myBarber, barberById, barberPrice, monthlyByBarber, invoiceMonths,
+  h, panel, eur, num, signed, dateET, dateTimeET, dayMonth, todayISO, monthLabel, parseNum,
+} from "./util.js";
+import {
+  S, draftVat, paymentMismatch, draftProblem, draftTotal, METHOD_LABEL, UNITS,
+  ledgerWithBalance, ledgerTotals, ledgerMonths, dayFigures, stockValue, lowStock, lowLimit,
+  stockStatus, isCancelled, lineTotal, isDraft, isUnpaid, statusLabel, unpaidInvoices, unpaidTotal,
+  isOwner, pastBuyers, AREAS, AREA_LABEL, permsOf,
+  myBarber, barberById, barberPrice, activeBarber, lockedBarber, tileFor,
+  monthlyByBarber, invoiceMonths,
 } from "./state.js";
+
+// Offered in the cash-book dropdown; categories already used join the list.
+const LEDGER_CATEGORIES = ["Teenuste müük", "Kaubamüük", "Kaubavaru", "Rent", "Töövahendid", "Palk"];
+
+// Helper text under a form or table.
+const note = (text, style = "") =>
+  h("p", { class: "lab hint", style, text });
 
 // ------------------------------------------------------------- fragments
 
@@ -130,33 +136,6 @@ export function viewDash(actions) {
 const lineSummary = (invoice) =>
   (invoice.lines || []).map((l) => l.name).join(", ").slice(0, 60) || invoice.buyer_name;
 
-// The barber the picker add-on currently has selected, or null when the add-on
-// is not loaded. Read defensively and never required: the till is complete
-// without it, and this is the only place the two know about each other.
-function activeBarber() {
-  const b = typeof window !== "undefined" && window.fiActiveBarber;
-  return b && b.displayName ? b : null;
-}
-
-// One tap on a service tile, as the line it becomes. The barber's own price
-// and name go on at creation: the price so the same barber's second haircut
-// adds to the first row instead of starting another, the name so a second
-// barber's haircuts stay a row of their own on a consolidated invoice.
-function serviceLine(service) {
-  const barber = activeBarber();
-  const priced = barber && barber.priceFor ? barber.priceFor(service.name) : null;
-  // The add-on identifies a barber by slug; the line stores the row id, so a
-  // monthly payout is not built on a name that could be edited later.
-  const row = barber ? S.barbers.find((b) => b.slug === barber.id) : null;
-  return {
-    serviceId: service.id,
-    barberId: row ? row.id : null,
-    name: service.name,
-    price: priced == null ? Number(service.price) : Number(priced),
-    note: barber ? barber.displayName : "",
-  };
-}
-
 // --------------------------------------------------------------- kiirmüük
 
 // The server allocates the real number when the sale is finished; this is the
@@ -175,22 +154,26 @@ export function viewPos(actions) {
   const vat = draftVat();
   const total = draftTotal();
   const mismatch = paymentMismatch();
+  const problem = draftProblem();
   const askTip = !(S.settings && S.settings.ask_tip === false);
   const showVat = !(S.settings && S.settings.show_vat === false);
 
-  const serviceCards = S.services.map((s) =>
-    h("button", {
-      class: "svc", type: "button",
-      // serviceId travels with the line so a report can count haircuts later
-      // and a customer's agreed price knows which service it applies to. The
-      // name and price are still copied onto the invoice, never referenced.
-      onclick: () => actions.addLine(serviceLine(s)),
+  // Each tile shows what the barber in the chair charges. A treatment they
+  // do not perform is struck through and cannot be rung up under their name.
+  const chair = activeBarber();
+  const serviceCards = S.services.map((s) => {
+    const tile = tileFor(s);
+    return h("button", {
+      class: "svc" + (tile.offered ? "" : " unavail"), type: "button",
+      disabled: !tile.offered,
+      title: tile.offered ? null : chair.name + " seda teenust ei paku",
+      onclick: tile.offered ? () => actions.ringUp(s) : null,
     },
       h("span", { class: "svcn", text: s.name }),
-      h("span", { class: "svcp", text: eur(s.price) }),
+      h("span", { class: "svcp", text: tile.offered ? eur(tile.price) : "—" }),
       s.note ? h("span", { class: "svcm", text: s.note }) : null
-    )
-  );
+    );
+  });
 
   const productCards = S.products.map((p) => {
     const out = Number(p.stock) <= 0;
@@ -205,7 +188,7 @@ export function viewPos(actions) {
         h("span", { class: "svcn", text: p.name }),
         h("span", { class: "svcp", text: num(p.price) })
       ),
-      h("span", { class: "svcm" + (out ? " neg" : Number(p.stock) <= 3 ? " warnc" : ""),
+      h("span", { class: "svcm" + (out ? " neg" : Number(p.stock) <= lowLimit() ? " warnc" : ""),
                   text: out ? "Otsas" : "Jääk " + Number(p.stock) })
     );
   });
@@ -221,22 +204,15 @@ export function viewPos(actions) {
       discounted ? "−" + num(l.discount).replace(",00", "") + "% · " + eur(lineTotal(l)) : null,
     ].filter(Boolean).join(" · ");
 
-    return h("div", { class: "dline" + (l.open ? " open" : "") },
-      // Carries .tr as well as .dname: the barber add-on reads a line's name
-      // out of the DOM with querySelector(".tr"), and it is a separate,
-      // deliberately self-contained file that should not have to know this
-      // row was rebuilt.
+    return h("div", { class: "dline" + (l.open ? " open" : "") + (Number(l.qty) > 0 ? "" : " bad") },
       h("button", {
-        class: "dname tr", type: "button", title: "Ava rida",
+        class: "dname", type: "button", title: "Ava rida",
         onclick: () => actions.toggleLine(l.key),
       }, l.name),
       inp({ type: "number", min: "0", step: "1", value: String(l.qty),
             "aria-label": "Kogus", oninput: (e) => actions.updateLine(l.key, { qty: parseNum(e.target.value) }) }),
       inp({ type: "number", min: "0", step: "0.01", value: String(l.price),
             "aria-label": "Hind", oninput: (e) => actions.updateLine(l.key, { price: parseNum(e.target.value) }) }),
-      // .dexp, not .del: throughout this app .del means "remove this thing",
-      // and the barber add-on clicks the first .del in a line to drop it. An
-      // expander wearing that class would open the row instead of removing it.
       h("button", { class: "dexp", type: "button",
                     title: l.open ? "Sulge rida" : "Muuda nime, selgitust, allahindlust",
                     "aria-expanded": String(Boolean(l.open)),
@@ -282,7 +258,8 @@ export function viewPos(actions) {
 
   return [
     head(
-      S.draft.editingId ? "Mustandi muutmine" : "Uus arve · " + expectedNr(),
+      (S.draft.editingId ? "Mustandi muutmine" : "Uus arve · " + expectedNr()) +
+        (chair ? " · " + chair.name : ""),
       S.draft.editingId ? "Koondarve" : "Kiirmüük",
       h("button", { class: "btng", type: "button", onclick: actions.clearDraft },
         S.draft.editingId ? "Loobu muutmisest" : "Tühjenda")
@@ -291,6 +268,7 @@ export function viewPos(actions) {
     h("div", { class: "cols c2" },
       h("div", { class: "stack" },
         panel({},
+          chairPicker(actions),
           h("p", { class: "thr", text: "Teenused · kliki, et lisada rida", style: "margin:0 0 12px" }),
           h("div", { class: "cardgrid" }, ...serviceCards)
         ),
@@ -398,9 +376,9 @@ export function viewPos(actions) {
             ),
 
         h("p", { id: "posErr", class: "err", style: "margin:10px 0 0" },
-          S.draft.lines.length && mismatch !== 0
+          problem || (S.draft.lines.length && mismatch !== 0
             ? "Vahe " + num(Math.abs(mismatch) / 100) + " € — sularaha ja kaart kokku peavad võrduma summaga."
-            : ""),
+            : "")),
 
         // Two ways out of the till. Saving a draft mints no number and books
         // nothing, so a consolidated invoice can be built up over a week and
@@ -408,12 +386,12 @@ export function viewPos(actions) {
         h("div", { style: "display:flex;gap:8px;flex-wrap:wrap;margin-top:10px" },
           h("button", {
             id: "posDraft", class: "btng", type: "button", style: "flex:1 1 150px",
-            disabled: !S.draft.lines.length,
+            disabled: !S.draft.lines.length || Boolean(problem),
             onclick: actions.saveDraft,
           }, S.draft.editingId ? "Salvesta mustand" : "Salvesta mustandina"),
           h("button", {
             id: "posFinish", class: "btnp", type: "button", style: "flex:2 1 180px",
-            disabled: !S.draft.lines.length || mismatch !== 0,
+            disabled: !S.draft.lines.length || mismatch !== 0 || Boolean(problem),
             onclick: actions.finishSale,
           }, S.draft.method === "later" ? "Esita arve" : "Lõpeta müük")
         )
@@ -428,11 +406,36 @@ export function viewPos(actions) {
       ),
       h("button", {
         id: "barFinish", class: "btnp", type: "button",
-        disabled: !S.draft.lines.length || mismatch !== 0,
+        disabled: !S.draft.lines.length || mismatch !== 0 || Boolean(problem),
         onclick: actions.finishSale,
       }, "Lõpeta")
     ),
   ];
+}
+
+// Who is in the chair. The price on every service tile, and the name written
+// under each line, follow this. A barber's own login is tied to their chair
+// and sees only their name here.
+function chairPicker(actions) {
+  if (!S.barbers.length) return null;
+  const locked = lockedBarber();
+  const chair = activeBarber();
+  return h("div", { class: "chair" },
+    h("p", { class: "thr", text: "Kassas", style: "margin:0" }),
+    locked
+      ? h("span", { class: "pill pos", text: locked.name })
+      : h("div", { class: "chairs", role: "radiogroup", "aria-label": "Barber" },
+          ...S.barbers.map((b) =>
+            h("button", {
+              type: "button", role: "radio",
+              class: "chairbtn" + (chair && chair.id === b.id ? " on" : ""),
+              "aria-checked": String(Boolean(chair && chair.id === b.id)),
+              title: b.tier || null,
+              onclick: () => actions.pickChair(b.id),
+            }, b.name)
+          )
+        )
+  );
 }
 
 const totalRow = (label, value, id) =>
@@ -531,7 +534,16 @@ export function viewInvoices(actions) {
             ? "Arve avaneb kõrval A4 lehena. Trüki / PDF saadab printi ainult lehe, ilma liideseta."
             : "Arve avaneb kõrval A4 lehena. Esitatud arve tühistamine on omaniku õigus.")
       ),
-      selected ? invoiceSheet(selected) : h("p", { class: "empty", text: "Vali arve." })
+      selected
+        ? h("div", { class: "stack" },
+            // An invoice that asks for a transfer but names no account cannot
+            // be paid. Said here, on screen only — never printed.
+            (isUnpaid(selected) || isDraft(selected)) && !(S.settings && S.settings.company_iban)
+              ? h("div", { class: "chip noprint" },
+                  h("span", { text: "Arvel pole IBAN-it — lisa see Hinnakirja alt „Arve päis ja kassa“." }))
+              : null,
+            invoiceSheet(selected))
+        : h("p", { class: "empty", text: "Vali arve." })
     ),
   ];
 }
@@ -562,15 +574,13 @@ function invoiceSheet(invoice) {
           h("div", { text: "Tähtaeg " + dateET(invoice.due_date) }),
           // A draft has no number yet, so it has no reference number either —
           // printing the label with nothing after it just looks broken.
-          isDraft(invoice)
-            ? null
-            : h("div", { text: "Viitenumber " + String(invoice.nr).replace(/\D/g, "") })
+          invoice.reference ? h("div", { text: "Viitenumber " + invoice.reference }) : null
         )
       )
     ),
 
     isCancelled(invoice)
-      ? h("p", { class: "a4void", text: "Tühistatud " + dateET(invoice.cancelled_at) +
+      ? h("p", { class: "a4void", text: "Tühistatud " + dateTimeET(invoice.cancelled_at).slice(0, 10) +
                  (invoice.cancel_reason ? " · " + invoice.cancel_reason : "") })
       : null,
 
@@ -627,8 +637,10 @@ function invoiceSheet(invoice) {
       h("div", { class: "thr", text: "Makse" }),
       // An unpaid invoice must say so on the page itself: printing one that
       // reads "Sularaha 0,00 · Kaart 0,00" tells the customer nothing.
-      isUnpaid(invoice)
-        ? h("div", { text: "Maksmata · palume tasuda ülekandega " + dateET(invoice.due_date) + " arvel toodud arveldusarvele." })
+      isUnpaid(invoice) || isDraft(invoice)
+        ? h("div", { text: "Palume tasuda ülekandega hiljemalt " + dateET(invoice.due_date) +
+            (st.company_iban ? " arveldusarvele " + st.company_iban : "") +
+            (invoice.reference ? ", viitenumber " + invoice.reference : "") + "." })
         : h("div", {
             text: [
               Number(invoice.cash) ? "Sularaha " + num(invoice.cash) : null,
@@ -636,7 +648,7 @@ function invoiceSheet(invoice) {
               Number(invoice.bank) ? "Ülekanne " + num(invoice.bank) : null,
             ].filter(Boolean).join(" · ") || "Tasutud",
           }),
-      h("div", { text: "Palume tasuda arvel toodud tähtajaks." })
+      isUnpaid(invoice) || isDraft(invoice) ? null : h("div", { text: "Arve on tasutud. Aitäh!" })
     )
   );
 }
@@ -644,8 +656,13 @@ function invoiceSheet(invoice) {
 // ------------------------------------------------------------ kassaraamat
 
 export function viewLedger(actions) {
-  const totals = ledgerTotals();
-  const rows = ledgerWithBalance();
+  // The book is shown a month at a time; the balance column still runs over
+  // the whole book, because the drawer does not empty on the first.
+  const months = ledgerMonths();
+  const month = S.ledgerMonth === "" ? ""
+    : months.includes(S.ledgerMonth) ? S.ledgerMonth : todayISO().slice(0, 7);
+  const totals = ledgerTotals(month);
+  const rows = ledgerWithBalance().filter((e) => !month || String(e.entry_date).slice(0, 7) === month);
   const grid = "70px 62px 1fr 1.5fr 80px 80px 84px 92px 92px 28px";
 
   const form = {
@@ -678,20 +695,24 @@ export function viewLedger(actions) {
       e.invoice_id
         ? h("span", { class: "thr r", title: "Tuli arvest", text: "·" })
         : h("button", { class: "del", type: "button", title: "Kustuta kanne",
-                        onclick: () => actions.deleteLedger(e.id) }, "×")
+                        onclick: () => actions.deleteLedger(e) }, "×")
     )
   );
 
   return [
-    head(monthLabel(todayISO()), "Kassaraamat",
-      h("button", { class: "btng", type: "button", onclick: actions.exportLedger }, "Ekspordi CSV")
+    head(month ? monthLabel(month + "-01") : "Kogu raamat", "Kassaraamat",
+      select({ style: "width:auto;min-width:150px", "aria-label": "Kuu",
+               onchange: (e) => actions.pickLedgerMonth(e.target.value) },
+        [...months.map((m) => ({ value: m, label: monthLabel(m + "-01") })), { value: "", label: "Kõik kuud" }],
+        month),
+      h("button", { class: "btng", type: "button", onclick: () => actions.exportLedger(month) }, "Ekspordi CSV")
     ),
 
     h("div", { class: "grid4" },
-      kpi("Sularaha + kaart", eur(totals.cashIn + totals.cardIn)),
-      kpi("Ülekandega", eur(totals.bankIn)),
+      kpi("Tulu: sularaha + kaart", eur(totals.cashIn + totals.cardIn)),
+      kpi("Tulu: ülekandega", eur(totals.bankIn)),
       kpi("Kulud", (totals.out > 0 ? "−" : "") + eur(totals.out), { cls: totals.out > 0 ? "neg" : "" }),
-      kpi("Jääk", eur(totals.balance), { inverse: true })
+      kpi(month ? "Jääk kuu lõpus" : "Jääk", eur(totals.balance), { inverse: true })
     ),
 
     panel({},
@@ -724,7 +745,7 @@ export function viewLedger(actions) {
       ["Kuupäev", "Tüüp", "Kategooria", "Kirjeldus",
        { label: "Sularaha", r: true }, { label: "Kaart", r: true }, { label: "Ülekanne", r: true },
        { label: "Summa", r: true }, { label: "Jääk", r: true }, ""],
-      body, "Kandeid veel pole."),
+      body, month ? "Sel kuul pole kandeid." : "Kandeid veel pole."),
   ];
 }
 
@@ -733,6 +754,15 @@ export function viewLedger(actions) {
 export function viewStock(actions) {
   const form = { date: todayISO(), productId: S.products[0] ? S.products[0].id : null,
                  type: "in", qty: "1", price: "" };
+  // A delivery is booked at what it cost; the product's ostuhind is the
+  // obvious starting figure, so it is filled in rather than left at zero.
+  const costOf = (id) => {
+    const p = S.products.find((x) => x.id === id);
+    return p && Number(p.cost) ? String(Number(p.cost)) : "";
+  };
+  form.price = costOf(form.productId);
+  const priceInput = inp({ type: "number", min: "0", step: "0.01", placeholder: "0,00", value: form.price,
+    oninput: (e) => (form.price = e.target.value) });
 
   const stockRows = S.products.map((p) => {
     const st = stockStatus(p);
@@ -744,7 +774,7 @@ export function viewStock(actions) {
       inp({ class: "inp stockinp " + (st.cls === "pos" ? "" : st.cls),
             type: "number", min: "0", step: "1", value: String(Number(p.stock)),
             "aria-label": "Jääk: " + p.name,
-            onchange: (e) => actions.setStock(p.id, p.name, parseNum(e.target.value)) }),
+            onchange: (e) => actions.setStock(p, parseNum(e.target.value)) }),
       h("span", { class: "tr mono r", text: num(Number(p.stock) * Number(p.cost)) }),
       h("span", { class: "pill r " + st.cls, text: st.label })
     );
@@ -761,7 +791,7 @@ export function viewStock(actions) {
       m.invoice_id
         ? h("span", { class: "thr r", title: "Tuli müügist", text: "·" })
         : h("button", { class: "del", type: "button", title: "Kustuta liikumine",
-                        onclick: () => actions.deleteMovement(m.id) }, "×")
+                        onclick: () => actions.deleteMovement(m) }, "×")
     )
   );
 
@@ -777,14 +807,16 @@ export function viewStock(actions) {
       h("p", { class: "thr", text: "Lisa liikumine", style: "margin:0 0 12px" }),
       h("div", { class: "formrow" },
         field("Kuupäev", inp({ type: "date", value: form.date, oninput: (e) => (form.date = e.target.value) })),
-        field("Toode", select({ oninput: (e) => (form.productId = Number(e.target.value)) },
+        field("Toode", select({ oninput: (e) => {
+            form.productId = Number(e.target.value);
+            if (form.type === "in") priceInput.value = form.price = costOf(form.productId);
+          } },
           S.products.map((p) => ({ value: p.id, label: p.name })), form.productId)),
         field("Liikumine", select({ oninput: (e) => (form.type = e.target.value) },
           [{ value: "in", label: "Sisse (ost)" }, { value: "out", label: "Välja (mahakandmine)" }], form.type)),
         field("Kogus", inp({ type: "number", min: "1", step: "1", value: form.qty,
           oninput: (e) => (form.qty = e.target.value) })),
-        field("Ühiku hind", inp({ type: "number", min: "0", step: "0.01", placeholder: "0,00",
-          oninput: (e) => (form.price = e.target.value) })),
+        field("Ühiku hind", priceInput),
         h("button", { class: "btnp", type: "button", disabled: !S.products.length,
           onclick: () => actions.addMovement(form) }, "+ Lisa")
       )
@@ -813,29 +845,66 @@ export function viewStock(actions) {
 export function viewPrices(actions) {
   const st = S.settings || {};
 
+  // Name and note are edited in place like the price: change the field, leave
+  // it, and it is saved. An emptied name is put back rather than sent.
+  const textCell = (value, label, onSave, attrs = {}) =>
+    inp({ type: "text", value, "aria-label": label, ...attrs,
+          onchange: (e) => {
+            const v = e.target.value.trim();
+            if (!v && attrs.required) { e.target.value = value; return; }
+            if (v !== value) onSave(v);
+          } });
+
   const serviceRows = S.services.map((s) =>
-    h("div", { class: "row", style: "grid-template-columns:1fr 110px 1fr" },
-      h("span", { class: "tr", text: s.name }),
+    h("div", { class: "row", style: "grid-template-columns:minmax(0,1.4fr) 100px minmax(0,1fr) 28px" },
+      textCell(s.name, "Teenus", (name) => actions.saveService(s, { name }), { required: true, maxlength: "200" }),
       inp({ type: "number", min: "0", step: "0.01", value: String(Number(s.price)),
             "aria-label": "Hind: " + s.name,
-            onchange: (e) => actions.saveService(s.id, { price: parseNum(e.target.value) }) }),
-      h("span", { class: "thr", text: s.note || "" })
+            onchange: (e) => actions.saveService(s, { price: parseNum(e.target.value) }) }),
+      textCell(s.note || "", "Märkus: " + s.name, (v) => actions.saveService(s, { note: v }),
+        { placeholder: "Märkus", maxlength: "200" }),
+      h("button", { class: "del", type: "button", title: "Eemalda teenus",
+                    onclick: () => actions.removeService(s) }, "×")
     )
   );
 
+  const svcForm = { name: "", price: "", note: "" };
+  const addServiceRow = h("div", { class: "formrow", style: "margin-top:10px" },
+    field("Uus teenus", inp({ type: "text", maxlength: "200", placeholder: "Nt. Laste lõikus",
+      oninput: (e) => (svcForm.name = e.target.value) })),
+    field("Hind", inp({ type: "number", min: "0", step: "0.01", placeholder: "0,00",
+      oninput: (e) => (svcForm.price = e.target.value) })),
+    field("Märkus", inp({ type: "text", maxlength: "200", placeholder: "Nt. 30 min",
+      oninput: (e) => (svcForm.note = e.target.value) })),
+    h("button", { class: "btnp", type: "button", onclick: () => actions.createService(svcForm) }, "+ Lisa")
+  );
+
   const productRows = S.products.map((p) =>
-    h("div", { class: "row", style: "grid-template-columns:1fr 110px 110px" },
+    h("div", { class: "row", style: "grid-template-columns:minmax(0,1fr) 96px 96px 28px" },
       h("span", { class: "tr namecell" },
         p.image_url ? h("img", { class: "thumb", src: p.image_url, alt: "", loading: "lazy" }) : null,
-        h("span", { text: p.name })
+        textCell(p.name, "Toode", (name) => actions.saveProduct(p, { name }), { required: true, maxlength: "200" })
       ),
       inp({ type: "number", min: "0", step: "0.01", value: String(Number(p.cost)),
             "aria-label": "Ostuhind: " + p.name,
-            onchange: (e) => actions.saveProduct(p.id, { cost: parseNum(e.target.value) }) }),
+            onchange: (e) => actions.saveProduct(p, { cost: parseNum(e.target.value) }) }),
       inp({ type: "number", min: "0", step: "0.01", value: String(Number(p.price)),
             "aria-label": "Müügihind: " + p.name,
-            onchange: (e) => actions.saveProduct(p.id, { price: parseNum(e.target.value) }) })
+            onchange: (e) => actions.saveProduct(p, { price: parseNum(e.target.value) }) }),
+      h("button", { class: "del", type: "button", title: "Eemalda toode",
+                    onclick: () => actions.removeProduct(p) }, "×")
     )
+  );
+
+  const prodForm = { name: "", cost: "", price: "", image_url: "" };
+  const addProductRow = h("div", { class: "formrow", style: "margin-top:10px" },
+    field("Uus toode", inp({ type: "text", maxlength: "200", placeholder: "Nt. Uppercut Deluxe Pomade",
+      oninput: (e) => (prodForm.name = e.target.value) })),
+    field("Ostuhind", inp({ type: "number", min: "0", step: "0.01", placeholder: "0,00",
+      oninput: (e) => (prodForm.cost = e.target.value) })),
+    field("Müügihind", inp({ type: "number", min: "0", step: "0.01", placeholder: "0,00",
+      oninput: (e) => (prodForm.price = e.target.value) })),
+    h("button", { class: "btnp", type: "button", onclick: () => actions.createProduct(prodForm) }, "+ Lisa")
   );
 
   const setting = (label, key, attrs = {}) =>
@@ -877,6 +946,39 @@ export function viewPrices(actions) {
       })
     : [];
 
+  const barberForm = { name: "", tier: "", phone: "" };
+  const barberAdmin = isOwner()
+    ? panel({},
+        h("p", { class: "thr", text: "Barberid", style: "margin:0 0 12px" }),
+        picked
+          ? h("div", { class: "formrow" },
+              field("Nimi", textCell(picked.name, "Barberi nimi", (name) => actions.saveBarber(picked, { name }),
+                { required: true, maxlength: "120" })),
+              field("Tase", textCell(picked.tier || "", "Tase", (tier) => actions.saveBarber(picked, { tier }),
+                { placeholder: "Nt. Meister", maxlength: "60" })),
+              field("Telefon", textCell(picked.phone || "", "Telefon", (phone) => actions.saveBarber(picked, { phone }),
+                { maxlength: "40" }))
+            )
+          : null,
+        picked
+          ? h("button", { class: "btng sm", type: "button", style: "margin-top:10px",
+                          onclick: () => actions.removeBarber(picked) }, "Eemalda " + picked.name)
+          : null,
+        h("p", { class: "thr", text: "Uus barber", style: "margin:16px 0 8px" }),
+        h("div", { class: "formrow" },
+          field("Nimi", inp({ type: "text", maxlength: "120", placeholder: "Nt. Barber Mari",
+            oninput: (e) => (barberForm.name = e.target.value) })),
+          field("Tase", inp({ type: "text", maxlength: "60", placeholder: "Nt. Rookie",
+            oninput: (e) => (barberForm.tier = e.target.value) })),
+          field("Telefon", inp({ type: "text", maxlength: "40",
+            oninput: (e) => (barberForm.phone = e.target.value) })),
+          h("button", { class: "btnp", type: "button", onclick: () => actions.createBarber(barberForm) }, "+ Lisa")
+        ),
+        note("Konto sidumine barberiga käib Kontode all. Seotud konto näeb kassas ainult enda nime ja hindu.",
+          "margin:12px 0 0")
+      )
+    : null;
+
   const barberBlock = !picked
     ? null
     : h("div", {},
@@ -886,7 +988,7 @@ export function viewPrices(actions) {
           // one name their account is attached to and nobody else's.
           isOwner()
             ? select(
-                { style: "width:auto;min-width:190px",
+                { style: "width:auto;min-width:190px", "aria-label": "Barber",
                   onchange: (e) => actions.pickBarber(Number(e.target.value)) },
                 S.barbers.map((b) => ({ value: b.id, label: b.name + (b.tier ? " · " + b.tier : "") })),
                 picked.id
@@ -896,33 +998,35 @@ export function viewPrices(actions) {
         table("1fr 90px 70px 110px",
           ["Teenus", { label: "Tavahind", r: true }, { label: "Pakub", r: true }, { label: "Hind", r: true }],
           barberRows, "Teenuseid pole."),
-        h("p", { class: "lab", style: "color:var(--tx3);font-weight:400;margin:10px 0 0;line-height:1.5" },
-          "Need hinnad ilmuvad kassas, kui see barber on valitud. Märkeruudu eemaldamine " +
+        note("Need hinnad ilmuvad kassas, kui see barber on valitud. Märkeruudu eemaldamine " +
           "kriipsutab teenuse tema all läbi ja seda ei saa talle arvele lisada. " +
-          "Salongi enda tavahind ülal jääb puutumata.")
+          "Salongi enda tavahind ülal jääb puutumata.", "margin:10px 0 0")
       );
 
   return [
-    head("Teenused ja käibemaks", "Hinnakiri"),
+    head("Teenused, tooted ja käibemaks", "Hinnakiri"),
 
     h("div", { class: "cols c2" },
       h("div", { class: "stack" },
         h("div", {},
           h("p", { class: "thr", text: "Teenused", style: "margin:0 0 10px" }),
-          table("1fr 110px 1fr", ["Teenus", { label: "Hind", r: true }, "Märkus"],
-            serviceRows, "Teenuseid pole.")
+          table("minmax(0,1.4fr) 100px minmax(0,1fr) 28px",
+            ["Teenus", { label: "Hind", r: true }, "Märkus", ""], serviceRows, "Teenuseid pole."),
+          addServiceRow
         ),
         barberBlock,
 
         h("div", {},
           h("p", { class: "thr", text: "Tooted", style: "margin:0 0 10px" }),
-          table("1fr 110px 110px",
-            ["Toode", { label: "Ostuhind", r: true }, { label: "Müügihind", r: true }],
-            productRows, "Tooteid pole.")
+          table("minmax(0,1fr) 96px 96px 28px",
+            ["Toode", { label: "Ostuhind", r: true }, { label: "Müügihind", r: true }, ""],
+            productRows, "Tooteid pole."),
+          addProductRow
         )
       ),
 
       h("div", { class: "stack" },
+        barberAdmin,
         panel({},
           h("p", { class: "thr", text: "Arve seaded", style: "margin:0 0 12px" }),
           h("label", { class: "check", style: "margin-bottom:12px" },
@@ -931,17 +1035,17 @@ export function viewPrices(actions) {
             "Näita käibemaksu ridu"
           ),
           h("div", { class: "formrow" },
-            setting("KM määr %", "vat_rate", { type: "number", min: "0", max: "30", step: "1" }),
+            setting("KM määr %", "vat_rate", { type: "number", min: "0", max: "100", step: "1" }),
             setting("Madala jäägi piir", "low_stock", { type: "number", min: "0", step: "1" }),
-            setting("Maksetähtaeg (päeva)", "payment_days", { type: "number", min: "0", step: "1" })
+            setting("Maksetähtaeg (päeva)", "payment_days", { type: "number", min: "0", max: "365", step: "1" })
           ),
           h("label", { class: "check", style: "margin-top:14px" },
             h("input", { type: "checkbox", checked: st.ask_tip !== false,
               onchange: (e) => actions.saveSettings({ ask_tip: e.target.checked }) }),
             "Küsi jootraha kiirmüügis"
           ),
-          h("p", { class: "lab", style: "color:var(--tx3);font-weight:400;margin:12px 0 0;line-height:1.5" },
-            "Hinnad sisaldavad käibemaksu. Jootraha on käibemaksuvaba ja seda ei arvestata teenuse käibe hulka.")
+          note("Hinnad sisaldavad käibemaksu. Jootraha on käibemaksuvaba ja seda ei arvestata teenuse käibe hulka.",
+            "margin:12px 0 0")
         ),
 
         panel({},
@@ -952,14 +1056,14 @@ export function viewPrices(actions) {
             setting("Reg. number", "company_reg"),
             setting("KMKR number", "company_kmkr"),
             setting("Pank", "company_bank"),
-            setting("IBAN", "company_iban"),
+            setting("IBAN", "company_iban", { placeholder: "EE00 0000 0000 0000 0000" }),
             setting("Telefon", "company_phone"),
             setting("E-post", "company_email"),
             setting("Koduleht", "company_web"),
             setting("Kassa algsaldo", "opening_balance", { type: "number", step: "0.01" })
           ),
-          h("p", { class: "lab", style: "color:var(--tx3);font-weight:400;margin:12px 0 0;line-height:1.5" },
-            "Need väljad ilmuvad iga arve päisesse. Algsaldo on kassas olnud sularaha enne esimest kannet.")
+          note("Need väljad ilmuvad iga arve päisesse. IBAN on vajalik maksmata arvetel. " +
+            "Algsaldo on kassas olnud sularaha enne esimest kannet.", "margin:12px 0 0")
         )
       )
     ),
@@ -998,15 +1102,16 @@ export function viewCustomers(actions) {
         return h("div", { class: "row", style: "grid-template-columns:1fr 90px 110px" },
           h("span", { class: "tr", text: s.name }),
           h("span", { class: "tr mono r dim", text: num(s.price) }),
-          isOwner()
-            ? inp({
-                type: "number", min: "0", step: "0.01",
-                value: agreed === undefined ? "" : String(agreed),
-                placeholder: "tavahind",
-                "aria-label": "Erihind: " + s.name,
-                onchange: (e) => actions.setCustomerPrice(selected.id, s.id, e.target.value),
-              })
-            : h("span", { class: "tr mono r", text: agreed === undefined ? "—" : num(agreed) })
+          // Whoever may open Kliendid may set these — the server's rule. The
+          // old screen offered the field to the owner only, while the server
+          // took it from anyone with the switch on.
+          inp({
+            type: "number", min: "0", step: "0.01",
+            value: agreed === undefined ? "" : String(agreed),
+            placeholder: "tavahind",
+            "aria-label": "Erihind: " + s.name,
+            onchange: (e) => actions.setCustomerPrice(selected.id, s.id, e.target.value),
+          })
         );
       })
     : [];
@@ -1053,13 +1158,27 @@ export function viewCustomers(actions) {
                 ["Teenus", { label: "Tavahind", r: true }, { label: "Erihind", r: true }],
                 priceRows, "Teenuseid pole.")
             ),
-            isOwner()
-              ? panel({},
-                  h("p", { class: "thr", text: selected.name, style: "margin:0 0 12px" }),
-                  h("button", { class: "btng wide", type: "button",
-                                onclick: () => actions.removeCustomer(selected) }, "Eemalda klient")
+            panel({},
+              h("p", { class: "thr", text: "Kliendi andmed", style: "margin:0 0 12px" }),
+              h("div", { style: "display:flex;flex-direction:column;gap:10px" },
+                ...[
+                  ["name", "Nimi või ettevõte", 200],
+                  ["details", "Registrikood, aadress või e-post", 500],
+                  ["note", "Märkus", 300],
+                ].map(([key, label, max]) =>
+                  field(label, inp({
+                    type: "text", maxlength: String(max), autocomplete: "off", value: selected[key] || "",
+                    onchange: (e) => {
+                      const v = e.target.value.trim();
+                      if (key === "name" && !v) { e.target.value = selected.name; return; }
+                      if (v !== (selected[key] || "")) actions.updateCustomer(selected, { [key]: v });
+                    },
+                  }))
                 )
-              : null
+              ),
+              h("button", { class: "btng wide", type: "button", style: "margin-top:12px",
+                            onclick: () => actions.removeCustomer(selected) }, "Eemalda klient")
+            )
           )
         : h("p", { class: "empty", text: "Vali klient või lisa uus." })
     ),
@@ -1081,7 +1200,7 @@ export function viewAdmin(actions) {
       h("span", { class: "tr dim", text: u.email }),
       u.role === "omanik" || u.id === (S.me && S.me.id)
         ? h("span", { class: "pill pos", text: u.role })
-        : select({ onchange: (e) => actions.setStaffRole(u.id, e.target.value) },
+        : select({ "aria-label": "Roll: " + u.email, onchange: (e) => actions.setStaffRole(u, e.target.value) },
                   [{ value: "barber", label: "barber" }, { value: "omanik", label: "omanik" }],
                   u.role),
       u.id === (S.me && S.me.id)
@@ -1093,8 +1212,10 @@ export function viewAdmin(actions) {
                           onclick: () => actions.reopenStaff(u) }, "Taasava"),
       // The forgotten-password case. The owner sets a new one; the old is
       // replaced, never revealed.
-      h("button", { class: "btng sm", type: "button",
-                    onclick: () => actions.resetStaffPassword(u) }, "Uus parool"),
+      u.id === (S.me && S.me.id)
+        ? h("span", { class: "thr", text: "vt all" })
+        : h("button", { class: "btng sm", type: "button",
+                        onclick: () => actions.resetStaffPassword(u) }, "Uus parool"),
 
       // Which chair this login belongs to. Setting it is what makes the
       // account see its own prices under Hinnakiri, and what stops it ringing
@@ -1103,7 +1224,8 @@ export function viewAdmin(actions) {
       u.role === "omanik"
         ? h("span", { class: "thr r", title: "Omanik pääseb kõigi juurde", text: "—" })
         : select(
-            { onchange: (e) => actions.linkBarber(u, e.target.value ? Number(e.target.value) : null) },
+            { "aria-label": "Barber: " + u.email,
+              onchange: (e) => actions.linkBarber(u, e.target.value ? Number(e.target.value) : null) },
             [{ value: "", label: "— sidumata —" },
              ...S.barbers.map((b) => ({ value: b.id, label: b.name }))],
             (S.barbers.find((b) => b.account_id === u.id) || {}).id || ""
@@ -1140,8 +1262,8 @@ export function viewAdmin(actions) {
   });
 
   const auditRows = S.audit.map((a) =>
-    h("div", { class: "row", style: "grid-template-columns:120px 1fr 1fr" },
-      h("span", { class: "tr mono", text: dateET(a.created_at) }),
+    h("div", { class: "row", style: "grid-template-columns:128px 1fr 1fr" },
+      h("span", { class: "tr mono", text: dateTimeET(a.created_at) }),
       h("span", { class: "tr", text: a.action + (a.invoice_nr ? " · " + a.invoice_nr : "") }),
       h("span", { class: "tr dim", text: (a.actor_name || a.actor_email || "—") +
                                          (a.detail ? " · " + a.detail : "") })
@@ -1211,11 +1333,12 @@ export function viewAdmin(actions) {
       h("div", { class: "stack" },
         h("div", {},
           h("p", { class: "thr", text: "Mida on tehtud", style: "margin:0 0 10px" }),
-          table("120px 1fr 1fr", ["Millal", "Toiming", "Kes"],
+          table("128px 1fr 1fr", ["Millal", "Toiming", "Kes"],
             auditRows, "Veel pole midagi kirjas.")
         ),
         h("p", { class: "lab", style: "color:var(--tx3);font-weight:400;margin:0;line-height:1.5" },
-          "Siia jääb jälg igast tühistamisest, esitamisest, maksmisest ja kontomuudatusest. " +
+          "Siia jääb jälg igast tühistamisest, esitamisest, maksmisest, kontomuudatusest, " +
+          "inventuurist ning käsitsi kande või laoliikumise kustutamisest. " +
           "See on ainus koht, kust hiljem näed, kes mida tegi.")
       )
     ),

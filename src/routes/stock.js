@@ -5,7 +5,7 @@
 
 const express = require("express");
 
-const { query, withTransaction } = require("../db");
+const { withTransaction } = require("../db");
 const { areaOnly } = require("../auth");
 const { wrap, httpError, moneyOr0, number, id, paramId, date } = require("../lib/http");
 const { today } = require("../lib/dates");

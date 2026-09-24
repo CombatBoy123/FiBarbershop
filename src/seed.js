@@ -34,8 +34,8 @@ const DEFAULT_PRODUCTS = [
   ["Uppercut Deluxe Texture Cream 100g", 0, 20],
 ];
 
-// The shop's barbers and what each of them charges, lifted out of the till
-// add-on where these five were hard-coded. Prices are the ones from that file:
+// The shop's barbers and what each of them charges, lifted out of the old
+// till add-on (since removed) where these five were hard-coded. Prices are the ones from that file:
 // a range became its lower bound, "free" became 0, and Kristo's scheduled
 // price became the one in force from 2026-09-01.
 //

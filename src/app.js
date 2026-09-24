@@ -74,7 +74,6 @@ function createApp() {
   // Errors thrown inside a route land here. `status` is set deliberately for
   // the cases the till should show verbatim; anything else is logged and
   // answered with a generic message.
-  // eslint-disable-next-line no-unused-vars
   app.use((err, req, res, next) => {
     // A malformed or oversized request body (express.json) shouldn't echo the
     // parser's internal message — return a generic 400 instead.

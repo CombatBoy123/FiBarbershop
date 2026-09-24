@@ -16,6 +16,18 @@ export function dateET(iso) {
   return d + "." + m + "." + y;
 }
 
+// A timestamp (audit rows, cancellations) in the till's own local time. The
+// date part of the raw UTC string is yesterday for anything done in Tartu
+// between midnight and 03:00.
+export function dateTimeET(ts) {
+  if (!ts) return "";
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return "";
+  const p = (n) => String(n).padStart(2, "0");
+  return p(d.getDate()) + "." + p(d.getMonth() + 1) + "." + d.getFullYear() +
+    " " + p(d.getHours()) + ":" + p(d.getMinutes());
+}
+
 export function dayMonth(iso) {
   if (!iso) return "";
   const [, m, d] = String(iso).slice(0, 10).split("-");
