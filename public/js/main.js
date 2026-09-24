@@ -417,6 +417,7 @@ const actions = {
     if (String(next).length < 8) return toast("Parool peab olema vähemalt 8 tähemärki.");
     const result = await guard(() => api.resetStaffPassword(user.id, next));
     if (!result) return;
+    if (result.token) setToken(result.token);
     afterWrite(result, { tab: "admin", message: "Parool vahetatud: " + user.email });
   },
 
@@ -425,6 +426,9 @@ const actions = {
     if (form.next !== form.again) return toast("Uued paroolid ei klapi omavahel.");
     const done = await guard(() => api.changeMyPassword(form.current, form.next));
     if (!done) return;
+    // Every other session of this account has just ended; this one carries
+    // on with the token the server handed back.
+    if (done.token) setToken(done.token);
     render();
     toast("Parool vahetatud.");
   },
@@ -590,7 +594,7 @@ const actions = {
   async saveSettings(patch) {
     const saved = await guard(() => api.saveSettings(patch));
     if (!saved) return;
-    S.settings = saved.settings;
+    applyState(saved.state);
     render();
     toast("Salvestatud.");
   },

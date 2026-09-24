@@ -17,13 +17,13 @@
 // land in your shell history and in the process list, environment values do
 // not. The password is never printed back.
 
-require("dotenv").config();
-
 const { pool, withTransaction } = require("../src/db");
+const { ready } = require("../src/migrations");
 const { hashPassword, ROLES } = require("../src/auth");
 const { seedDefaults } = require("../src/seed");
 
 async function main() {
+  await ready();
   const email = String(process.env.SEED_EMAIL || "").trim().toLowerCase();
   const password = String(process.env.SEED_PASSWORD || "");
   const name = String(process.env.SEED_NAME || "").trim();

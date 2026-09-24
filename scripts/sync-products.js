@@ -14,11 +14,10 @@
 // them, and guessing would put invented numbers into the stock valuation.
 // New products come in with cost 0 — fill those in on the Hinnakiri page.
 
-require("dotenv").config();
-
 const fs = require("fs");
 const path = require("path");
 const { pool, query } = require("../src/db");
+const { ready } = require("../src/migrations");
 
 const SHOP = process.env.SHOP_URL || "https://fibarbers.ee";
 const FEED = SHOP + "/collections/all/products.json?limit=250";
@@ -96,6 +95,7 @@ async function alignStock(userId, productId, target, cost) {
 }
 
 async function main() {
+  await ready();
   const email = String(process.env.SYNC_EMAIL || "").trim().toLowerCase();
   if (!email) throw new Error("Set SYNC_EMAIL to the account whose product list should be synced.");
 

@@ -1,14 +1,17 @@
 {
   "name": "fi-barbershop",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Fi Barbershop (Tartu) — kassa, arved, kassaraamat ja ladu",
   "main": "src/server.js",
   "type": "commonjs",
   "scripts": {
     "start": "node src/server.js",
-    "dev": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "migrate": "node -e \"require('./src/migrations').migrate().then(() => require('./src/db').pool.end())\"",
     "seed-user": "node scripts/seed-user.js",
     "sync-products": "node scripts/sync-products.js",
+    "test": "node --test test/*.test.js && node scripts/smoke-test.js",
+    "test:unit": "node --test test/*.test.js",
     "smoke-test": "node scripts/smoke-test.js"
   },
   "dependencies": {
@@ -18,5 +21,8 @@
     "express": "^4.19.2",
     "jsonwebtoken": "^9.0.2",
     "pg": "^8.23.0"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }
