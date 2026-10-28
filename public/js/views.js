@@ -1195,10 +1195,12 @@ export function viewCustomers(actions) {
 export function viewAdmin(actions) {
   const form = { name: "", email: "", password: "", role: "barber" };
 
-  const grid = "1fr 1.2fr 100px 118px 108px 150px";
+  // The two button columns are the same width, and every control in the row
+  // is sized by .staffrow, so the buttons line up from row to row.
+  const grid = "minmax(110px,1fr) minmax(150px,1.3fr) 112px 136px 136px 170px";
 
   const staffRows = S.staff.map((u) =>
-    h("div", { class: "row", style: "grid-template-columns:" + grid },
+    h("div", { class: "row staffrow", style: "grid-template-columns:" + grid },
       h("span", { class: "tr", text: u.name || "—" }),
       h("span", { class: "tr dim", text: u.email }),
       u.role === "omanik" || u.id === (S.me && S.me.id)
@@ -1212,19 +1214,19 @@ export function viewAdmin(actions) {
         ? h("span", { class: "thr", text: "sina" })
         : u.role === "omanik"
           ? h("span", { class: "thr", title: "Kustutamiseks muuda roll enne barberiks", text: "—" })
-          : h("div", { style: "display:flex;flex-direction:column;gap:4px" },
+          : h("div", { class: "btnstack" },
               // Accounts closed before deleting existed can still be let back in.
               u.active
                 ? null
-                : h("button", { class: "btng sm", type: "button",
+                : h("button", { class: "btng", type: "button",
                                 onclick: () => actions.reopenStaff(u) }, "Taasava"),
-              h("button", { class: "btng sm", type: "button",
+              h("button", { class: "btng", type: "button",
                             onclick: () => actions.deleteStaff(u) }, "Kustuta konto")),
       // The forgotten-password case. The owner sets a new one; the old is
       // replaced, never revealed.
       u.id === (S.me && S.me.id)
         ? h("span", { class: "thr", text: "vt all" })
-        : h("button", { class: "btng sm", type: "button",
+        : h("button", { class: "btng", type: "button",
                         onclick: () => actions.resetStaffPassword(u) }, "Uus parool"),
 
       // Which chair this login belongs to. Setting it is what makes the
@@ -1283,8 +1285,9 @@ export function viewAdmin(actions) {
   return [
     head(S.staff.length + " kontot", "Kontod"),
 
-    h("div", { class: "cols c2" },
-      h("div", { class: "stack" },
+    // The account tables take the full width: squeezed beside the log, names
+    // and addresses wrapped and the buttons no longer lined up.
+    h("div", { class: "stack" },
         h("div", {},
           h("p", { class: "thr", text: "Töötajad", style: "margin:0 0 10px" }),
           table(grid, ["Nimi", "E-post", "Roll", "Konto", "Parool", "Barber"],
@@ -1301,8 +1304,11 @@ export function viewAdmin(actions) {
             "Arvete kustutamine (tühistamine ja jäädav kustutamine) on barberitel vaikimisi sees. " +
             "Arve makstuks märkimine ning kontode haldus jäävad alati ainult omanikule, " +
             "ka siis kui Kontod on kellelegi lubatud.")
-        ),
+        )
+    ),
 
+    h("div", { class: "cols c2e" },
+      h("div", { class: "stack" },
         panel({},
           h("p", { class: "thr", text: "Minu parool", style: "margin:0 0 12px" }),
           h("div", { style: "display:flex;flex-direction:column;gap:10px" },

@@ -570,6 +570,24 @@ async function call(token, method, path, body) {
     ok("/app kannab turvapoliitikat", /script-src 'self'/.test(appPage.headers.get("content-security-policy") || ""));
     ok("/app/ suunab /app lehele (varem tuli CSS asemel HTML)", (await raw("GET", "/app/")).status === 301);
     ok("/app.html ei möödu turvapoliitikast", (await raw("GET", "/app.html")).status === 301);
+
+    console.log("\n12. Sissepääs Renderi seadetest (ADMIN_EMAIL / ADMIN_PASSWORD)");
+    const { ensureAdmin } = require("../src/adminAccount");
+    const quiet = () => {};
+    let refused = null;
+    try { await ensureAdmin({ email: EMAIL, password: "lyhike", log: quiet }); } catch (e) { refused = e.message; }
+    ok("liiga lühike ADMIN_PASSWORD keeldutakse", /vähemalt 8/.test(String(refused)), refused);
+    ok("ilma muutujateta ei tehta midagi", (await ensureAdmin({ log: quiet })) === null);
+    const r1 = await ensureAdmin({ email: EMAIL, password: "admin-uus-parool-1", log: quiet });
+    ok("OLEMASOLEVA KONTO PAROOL SEATI", r1.action === "reset" && r1.shopId === shopId, JSON.stringify(r1));
+    ok("vana sessioon lõppes (401)", (await call(OT, "GET", "/api/bootstrap")).status === 401);
+    const adminLogin = await call(null, "POST", "/api/login", { email: EMAIL, password: "admin-uus-parool-1" });
+    ok("UUE PAROOLIGA SAAB SISSE", adminLogin.status === 200, adminLogin.status);
+    const r2 = await ensureAdmin({ email: EMAIL, password: "admin-uus-parool-1", log: quiet });
+    ok("teine käivitus sama parooliga ei muuda midagi", r2.action === "unchanged", JSON.stringify(r2));
+    ok("ja sessioon jääb kehtima", (await call(adminLogin.data.token, "GET", "/api/bootstrap")).status === 200);
+    const audit12 = (await call(adminLogin.data.token, "GET", "/api/bootstrap")).data.audit;
+    ok("taastamine on auditijälges", audit12.some((x) => x.action === "konto taastatud"));
   } catch (e) {
     // An exception mid-run is a failure too — and it must be printed, since
     // the finally below exits the process before any outer catch could.

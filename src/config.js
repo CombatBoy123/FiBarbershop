@@ -51,4 +51,9 @@ module.exports = {
   SHOP_TZ,
   // Where the parts of the storefront that were never saved locally live.
   SITE_URL: (process.env.SITE_URL || "https://fibarbers.ee").replace(/\/+$/, ""),
+  // A way back in when nobody can log in (see adminAccount.js). Set them in
+  // Render's Environment settings, never in the repository.
+  ADMIN_EMAIL: process.env.ADMIN_EMAIL || "",
+  ADMIN_PASSWORD: process.env.ADMIN_PASSWORD || "",
+  ADMIN_NAME: process.env.ADMIN_NAME || "",
 };

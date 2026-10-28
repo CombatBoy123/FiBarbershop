@@ -214,6 +214,15 @@ a.navtab { text-decoration:none; }
 .dfoot { display:flex; align-items:center; gap:12px; padding-top:4px; }
 .dfoot .tr { margin-left:auto; font-variant-numeric:tabular-nums; }
 .btng.sm { padding:6px 10px; font-size:11px; }
+
+/* Kontod: every control in a staff row is the same height, and each button
+   fills its column, so "Kustuta konto" and "Uus parool" are the same size and
+   line up from row to row. */
+.row.staffrow { align-items:center; }
+.staffrow .inp, .staffrow .btng { width:100%; height:38px; }
+.staffrow .inp { padding:0 10px; }
+.staffrow .btng { padding:0 8px; font-size:11px; }
+.staffrow .btnstack { display:flex; flex-direction:column; gap:6px; }
 .tot { display:flex; justify-content:space-between; background:var(--btnbg); color:var(--btnfg);
        padding:11px 12px; font-family:"IBM Plex Mono", monospace; font-weight:500; font-size:15px;
        font-variant-numeric:tabular-nums; }

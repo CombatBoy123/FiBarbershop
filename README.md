@@ -34,6 +34,23 @@ SEED_EMAIL=info@fibarbers.ee SEED_PASSWORD='…' npm run seed-user
 | `npm run seed-user` | Create or reset a login (see the header of `scripts/seed-user.js`) |
 | `npm run sync-products` | Pull product names, prices and photos from fibarbers.ee |
 
+### Locked out?
+
+Render's free plan has no shell, so instead of `seed-user`:
+
+1. Render → the web service → **Environment** → add `ADMIN_EMAIL` and
+   `ADMIN_PASSWORD` (8+ characters; optionally `ADMIN_NAME`) → **Save**. The
+   service restarts.
+2. On start it makes sure that owner account exists with that password: it
+   resets the password of the account with that email, or creates the account
+   (on an empty database, together with the shop and its default price list).
+   The log says which, and the audit trail records it.
+3. Log in, then **delete both variables** again. While they are set, every
+   restart puts that password back.
+
+The password lives only in Render's settings — the repository is public, so a
+password written into it would be anyone's.
+
 The smoke test needs a `DATABASE_URL`. It creates its own shop, runs every
 flow against the real app in-process, and deletes that shop again, so it
 never reads or writes the real shop's books.
