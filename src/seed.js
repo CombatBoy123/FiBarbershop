@@ -12,26 +12,26 @@ const DEFAULT_SERVICES = [
   ["Muu (käsitsi)", 0, "Muuda rida"],
 ];
 
-// Retail range carried in the shop: [name, ostuhind, müügihind].
-// The range actually carried in the shop, mirroring fibarbers.ee.
-// Purchase prices start at 0 on purpose: only the owner knows them, and an
-// invented ostuhind would corrupt the stock valuation from day one.
-// Run `npm run sync-products` afterwards to pull in the product photos.
+// Retail range carried in the shop: [name, ostuhind, müügihind, photo].
+// The range, purchase prices and photos are the shop's own, as they stood in
+// its books on 25.09.2026; the photos ship with the app in
+// public/assets/products/. Stock is not seeded: a new shop's shelf is what
+// is booked in under Ladu.
 const DEFAULT_PRODUCTS = [
-  ["Fi Texture Powder 20g", 0, 15],
-  ["Nishmani habeme- ja vuntsihooldusõli 30 ml", 0, 15],
-  ["Nishman must šampoon 2in1 10x20ml", 0, 25],
-  ["Nishman Curl Cream 200ml", 0, 15],
-  ["Nishman Hair Gel Sea Salt 300ml", 0, 12],
-  ["Nishman käte- ja näokreem granaatõun", 0, 12],
-  ["Nishman Kõõmavastane šampoon XL 400ml", 0, 15],
-  ["Nõberu Face & After Shave Balm – Tobacco Vanilla 100ml", 0, 26],
-  ["Nõberu Ocean Spray 150ml - Tobacco Vanilla", 0, 22],
-  ["Uppercut Deluxe Clay 70g", 0, 20],
-  ["Uppercut Deluxe Light Hold 90g", 0, 20],
-  ["Uppercut Deluxe Matte Pomade 100g", 0, 20],
-  ["Uppercut Deluxe Salt Spray 150ml", 0, 15],
-  ["Uppercut Deluxe Texture Cream 100g", 0, 20],
+  ["Fi Texture Powder 20g", 9, 15, "assets/products/fi-texture-powder-20g.jpg"],
+  ["Nishmani habeme- ja vuntsihooldusõli 30 ml", 11.77, 15, "assets/products/nishmani-habeme-ja-vuntsihooldusoli-30-ml.webp"],
+  ["Nishman must šampoon 2in1 10x20ml", 10, 25, "assets/products/nishman-must-sampoon-2in1-10x20ml.jpg"],
+  ["Nishman Curl Cream 200ml", 11.79, 15, "assets/products/nishman-curl-cream-200ml.webp"],
+  ["Nishman Hair Gel Sea Salt 300ml", 6.5, 12, "assets/products/nishman-hair-gel-sea-salt-300ml.webp"],
+  ["Nishman käte- ja näokreem granaatõun", 8.57, 12, "assets/products/nishman-kate-ja-naokreem-granaatoun.jpg"],
+  ["Nishman Kõõmavastane šampoon XL 400ml", 6.63, 15, "assets/products/nishman-koomavastane-sampoon-xl-400ml.webp"],
+  ["Nõberu Face & After Shave Balm – Tobacco Vanilla 100ml", 11.2, 26, "assets/products/noberu-face-ja-after-shave-balm-tobacco-vanilla-100ml.png"],
+  ["Nõberu Ocean Spray 150ml - Tobacco Vanilla", 8.17, 22, "assets/products/noberu-ocean-spray-150ml-tobacco-vanilla.png"],
+  ["Uppercut Deluxe Clay 70g", 12, 20, "assets/products/uppercut-deluxe-clay-70g.webp"],
+  ["Uppercut Deluxe Light Hold 90g", 12.18, 20, "assets/products/uppercut-deluxe-light-hold-90g.webp"],
+  ["Uppercut Deluxe Matte Pomade 100g", 7.28, 20, "assets/products/uppercut-deluxe-matte-pomade-100g.webp"],
+  ["Uppercut Deluxe Salt Spray 150ml", 6.23, 15, "assets/products/uppercut-deluxe-salt-spray-150ml.webp"],
+  ["Uppercut Deluxe Texture Cream 100g", 12.04, 20, "assets/products/uppercut-deluxe-texture-cream-100g.webp"],
 ];
 
 // The shop's barbers and what each of them charges, lifted out of the old
@@ -108,10 +108,10 @@ async function seedDefaults(client, userId) {
     );
   }
   for (let i = 0; i < DEFAULT_PRODUCTS.length; i++) {
-    const [name, cost, price] = DEFAULT_PRODUCTS[i];
+    const [name, cost, price, image] = DEFAULT_PRODUCTS[i];
     await client.query(
-      "INSERT INTO products (user_id, name, cost, price, sort_order) VALUES ($1,$2,$3,$4,$5)",
-      [userId, name, cost, price, i]
+      "INSERT INTO products (user_id, name, cost, price, image_url, sort_order) VALUES ($1,$2,$3,$4,$5,$6)",
+      [userId, name, cost, price, image || "", i]
     );
   }
   await seedBarbers(client, userId);
