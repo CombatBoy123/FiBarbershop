@@ -5,7 +5,7 @@ const { PORT, ADMIN_EMAIL, ADMIN_PASSWORD, ADMIN_NAME } = require("./config");
 const { pool } = require("./db");
 const { ready } = require("./migrations");
 const { createApp } = require("./app");
-const { ensureAdmin } = require("./adminAccount");
+const { ensureAdmin, ensureFirstOwner } = require("./adminAccount");
 
 async function main() {
   // Nothing is served until the schema is current. A failed migration stops
@@ -18,6 +18,12 @@ async function main() {
     await ensureAdmin({ email: ADMIN_EMAIL, password: ADMIN_PASSWORD, name: ADMIN_NAME });
   } catch (err) {
     console.error("Admin: " + err.message);
+  }
+  // A brand-new, empty database gets the shop and its first owner.
+  try {
+    await ensureFirstOwner();
+  } catch (err) {
+    console.error("Esimene konto: " + err.message);
   }
 
   const server = createApp().listen(PORT, () => {

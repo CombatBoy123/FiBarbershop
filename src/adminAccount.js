@@ -22,6 +22,8 @@ const { seedDefaults } = require("./seed");
 const { isEmail } = require("./lib/http");
 const { audit } = require("./lib/invoicing");
 
+const FIRST_OWNER = require("./firstOwner");
+
 const SOURCE = "Renderi seadetest (ADMIN_EMAIL)";
 
 async function ensureAdmin({ email, password, name, log = console.log } = {}) {
@@ -82,4 +84,30 @@ async function ensureAdmin({ email, password, name, log = console.log } = {}) {
   return result;
 }
 
-module.exports = { ensureAdmin };
+// An empty database gets a shop and its first owner (firstOwner.js), so a
+// new database is never a till nobody can open. Any existing account — even a
+// single closed one — means the database is in use, and nothing is touched.
+async function ensureFirstOwner({ owner = FIRST_OWNER, log = console.log } = {}) {
+  const made = await withTransaction(async (client) => {
+    // Two instances starting at once must not both decide the table is empty.
+    await client.query("LOCK TABLE users IN SHARE ROW EXCLUSIVE MODE");
+    const any = await client.query("SELECT 1 FROM users LIMIT 1");
+    if (any.rowCount) return null;
+    const r = await client.query(
+      "INSERT INTO users (email, password_hash, name, role) VALUES ($1,$2,$3,'omanik') RETURNING id",
+      [owner.email, owner.passwordHash, owner.name || null]
+    );
+    const id = r.rows[0].id;
+    await client.query("UPDATE users SET shop_id = id WHERE id = $1", [id]);
+    await seedDefaults(client, id);
+    await audit(client, id, null, "konto loodud", null, owner.email + " · omanik · tühja andmebaasi esimene konto");
+    return { email: owner.email, shopId: id };
+  });
+  if (made) {
+    log("Esimene konto: andmebaas oli tühi — loodi salong ja omanik " + made.email +
+      ". Vaheta parool kohe pärast sisselogimist (Kontod → Minu parool).");
+  }
+  return made;
+}
+
+module.exports = { ensureAdmin, ensureFirstOwner };
