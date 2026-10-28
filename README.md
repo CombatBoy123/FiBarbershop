@@ -34,6 +34,24 @@ SEED_EMAIL=info@fibarbers.ee SEED_PASSWORD='…' npm run seed-user
 | `npm run seed-user` | Create or reset a login (see the header of `scripts/seed-user.js`) |
 | `npm run sync-products` | Pull product names, prices and photos from fibarbers.ee |
 
+### A new, empty database
+
+When the database has no accounts at all — say the free Render database
+expired and a new one was attached — the server creates the shop and its first
+owner on start: `admin@fibarbers.ee` (see `src/firstOwner.js`, which holds only
+the password's bcrypt hash, never the password). Change the password right
+after logging in, under Kontod → Minu parool. Once any account exists this does
+nothing, so it can never reset a real login.
+
+To bring the old books back instead, restore the backup into the new database
+(this replaces whatever the server created there):
+
+```powershell
+& "C:\Program Files\PostgreSQL\18\bin\pg_restore.exe" --clean --if-exists --no-owner --no-privileges -d "NEW_EXTERNAL_URL" "$HOME\Documents\fibarbers-backup.dump"
+```
+
+The old accounts and passwords come back with it.
+
 ### Locked out?
 
 Render's free plan has no shell, so instead of `seed-user`:
