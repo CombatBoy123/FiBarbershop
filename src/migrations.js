@@ -324,6 +324,68 @@ const MIGRATIONS = [
     // gone from the log.
     sql: `ALTER TABLE invoices ADD COLUMN IF NOT EXISTS created_by_label TEXT NOT NULL DEFAULT '';`,
   },
+
+  {
+    id: 7,
+    name: "fill in the product range from the 25.09 backup",
+    // The free database expired and the shop was recreated from the starting
+    // list, which had sale prices only: no purchase prices, no photos, an
+    // empty shelf. This fills those in from the shop's own books as they
+    // stood on 25.09.2026 — and only where nothing is there yet: a cost or
+    // price of 0, an empty photo, a product with no stock movements at all.
+    // Anything the shop has entered since is left exactly as it is. A product
+    // of the range that is missing entirely is added back.
+    sql: `
+      CREATE TEMP TABLE fi_range (name TEXT, cost NUMERIC, price NUMERIC, image TEXT, stock NUMERIC, sort INTEGER)
+        ON COMMIT DROP;
+      INSERT INTO fi_range VALUES
+        ('Fi Texture Powder 20g', 9, 15, 'assets/products/fi-texture-powder-20g.jpg', 22, 0),
+        ('Nishmani habeme- ja vuntsihooldusõli 30 ml', 11.77, 15, 'assets/products/nishmani-habeme-ja-vuntsihooldusoli-30-ml.webp', 1, 1),
+        ('Nishman must šampoon 2in1 10x20ml', 10, 25, 'assets/products/nishman-must-sampoon-2in1-10x20ml.jpg', 2, 2),
+        ('Nishman Curl Cream 200ml', 11.79, 15, 'assets/products/nishman-curl-cream-200ml.webp', 1, 3),
+        ('Nishman Hair Gel Sea Salt 300ml', 6.5, 12, 'assets/products/nishman-hair-gel-sea-salt-300ml.webp', 3, 4),
+        ('Nishman käte- ja näokreem granaatõun', 8.57, 12, 'assets/products/nishman-kate-ja-naokreem-granaatoun.jpg', 2, 5),
+        ('Nishman Kõõmavastane šampoon XL 400ml', 6.63, 15, 'assets/products/nishman-koomavastane-sampoon-xl-400ml.webp', 2, 6),
+        ('Nõberu Face & After Shave Balm – Tobacco Vanilla 100ml', 11.2, 26, 'assets/products/noberu-face-ja-after-shave-balm-tobacco-vanilla-100ml.png', 8, 7),
+        ('Nõberu Ocean Spray 150ml - Tobacco Vanilla', 8.17, 22, 'assets/products/noberu-ocean-spray-150ml-tobacco-vanilla.png', 12, 8),
+        ('Uppercut Deluxe Clay 70g', 12, 20, 'assets/products/uppercut-deluxe-clay-70g.webp', 5, 9),
+        ('Uppercut Deluxe Light Hold 90g', 12.18, 20, 'assets/products/uppercut-deluxe-light-hold-90g.webp', 0, 10),
+        ('Uppercut Deluxe Matte Pomade 100g', 7.28, 20, 'assets/products/uppercut-deluxe-matte-pomade-100g.webp', 7, 11),
+        ('Uppercut Deluxe Salt Spray 150ml', 6.23, 15, 'assets/products/uppercut-deluxe-salt-spray-150ml.webp', 6, 12),
+        ('Uppercut Deluxe Texture Cream 100g', 12.04, 20, 'assets/products/uppercut-deluxe-texture-cream-100g.webp', 8, 13);
+
+      INSERT INTO products (user_id, name, cost, price, image_url, sort_order)
+      SELECT s.id, r.name, r.cost, r.price, r.image, r.sort
+        FROM users s CROSS JOIN fi_range r
+       WHERE s.id = s.shop_id
+         AND NOT EXISTS (SELECT 1 FROM products p WHERE p.user_id = s.id AND p.name = r.name);
+
+      UPDATE products p SET
+        cost      = CASE WHEN p.cost = 0       THEN r.cost  ELSE p.cost      END,
+        price     = CASE WHEN p.price = 0      THEN r.price ELSE p.price     END,
+        image_url = CASE WHEN p.image_url = '' THEN r.image ELSE p.image_url END
+        FROM fi_range r, users s
+       WHERE p.name = r.name AND p.user_id = s.id AND s.id = s.shop_id;
+
+      INSERT INTO audit_log (shop_id, actor_id, action, detail)
+      SELECT s.id, NULL, 'inventuur',
+             'Algne laoseis 25.09 varukoopiast: ' || count(*) || ' toodet, ' || sum(r.stock) || ' tk'
+        FROM users s
+        JOIN products p ON p.user_id = s.id AND p.active
+        JOIN fi_range r ON r.name = p.name AND r.stock > 0
+       WHERE s.id = s.shop_id
+         AND NOT EXISTS (SELECT 1 FROM stock_movements m WHERE m.product_id = p.id)
+       GROUP BY s.id;
+
+      INSERT INTO stock_movements (user_id, product_id, move_date, move_type, qty, price)
+      SELECT p.user_id, p.id, CURRENT_DATE, 'in', r.stock, r.cost
+        FROM products p
+        JOIN fi_range r ON r.name = p.name
+        JOIN users s ON s.id = p.user_id AND s.id = s.shop_id
+       WHERE p.active AND r.stock > 0
+         AND NOT EXISTS (SELECT 1 FROM stock_movements m WHERE m.product_id = p.id);
+    `,
+  },
 ];
 
 // Several instances booting at once (a Render deploy overlaps the old one)
