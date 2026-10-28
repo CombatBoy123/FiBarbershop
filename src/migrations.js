@@ -386,6 +386,26 @@ const MIGRATIONS = [
          AND NOT EXISTS (SELECT 1 FROM stock_movements m WHERE m.product_id = p.id);
     `,
   },
+
+  {
+    id: 8,
+    name: "a missing purchase price takes the sale price",
+    // The shop's rule: a product without an ostuhind (0) is valued at its
+    // sale price, so the stock value never counts it at nothing. Runs after
+    // step 7, so the real purchase prices from the 25.09 books land first and
+    // only products that still have none are touched. New products follow
+    // the same rule when they are added (routes/catalog.js).
+    sql: `
+      INSERT INTO audit_log (shop_id, actor_id, action, detail)
+      SELECT user_id, NULL, 'hinnakiri muudetud',
+             'Ostuhind võeti müügihinnast: ' || count(*) || ' toodet (' || string_agg(name, ', ' ORDER BY sort_order) || ')'
+        FROM products
+       WHERE cost = 0 AND price > 0
+       GROUP BY user_id;
+
+      UPDATE products SET cost = price WHERE cost = 0 AND price > 0;
+    `,
+  },
 ];
 
 // Several instances booting at once (a Render deploy overlaps the old one)

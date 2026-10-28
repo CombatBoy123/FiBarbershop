@@ -138,16 +138,16 @@ router.post(
   wrap(async (req, res) => {
     const name = text(req.body.name, 200);
     if (!name) return res.status(400).json({ error: "Toote nimi puudub." });
+    const price = money(req.body.price, "müügihind");
+    // No purchase price given (empty or 0) means it takes the sale price —
+    // the shop's rule, so the stock value is never left counting a product
+    // at nothing. The owner can still change it under Hinnakiri.
+    const given = req.body.cost === undefined || req.body.cost === "" ? 0 : money(req.body.cost, "ostuhind");
     const r = await query(
       `INSERT INTO products (user_id, name, cost, price, image_url, sort_order)
        VALUES ($1,$2,$3,$4,$5,(SELECT COALESCE(MAX(sort_order)+1,0) FROM products WHERE user_id=$1))
        RETURNING *`,
-      [
-        req.shopId, name,
-        req.body.cost === undefined || req.body.cost === "" ? 0 : money(req.body.cost, "ostuhind"),
-        money(req.body.price, "müügihind"),
-        imageUrl(req.body.image_url),
-      ]
+      [req.shopId, name, given > 0 ? given : price, price, imageUrl(req.body.image_url)]
     );
     await sendState(req, res, { product: { ...r.rows[0], stock: 0 } }, 201);
   })

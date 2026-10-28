@@ -571,6 +571,12 @@ async function call(token, method, path, body) {
     ok("/app/ suunab /app lehele (varem tuli CSS asemel HTML)", (await raw("GET", "/app/")).status === 301);
     ok("/app.html ei möödu turvapoliitikast", (await raw("GET", "/app.html")).status === 301);
 
+    const noCost = await call(OT, "POST", "/api/products", { name: "Ostuhinnata toode", price: 18 });
+    ok("TÜHI OSTUHIND VÕETAKSE MÜÜGIHINNAST", noCost.status === 201 && Number(noCost.data.product.cost) === 18,
+      noCost.data.product && noCost.data.product.cost);
+    const withCost = await call(OT, "POST", "/api/products", { name: "Ostuhinnaga toode", cost: 7.5, price: 18 });
+    ok("antud ostuhind jääb nagu on", Number(withCost.data.product.cost) === 7.5, withCost.data.product.cost);
+
     console.log("\n12. Sissepääs Renderi seadetest (ADMIN_EMAIL / ADMIN_PASSWORD)");
     const { ensureAdmin } = require("../src/adminAccount");
     const quiet = () => {};
