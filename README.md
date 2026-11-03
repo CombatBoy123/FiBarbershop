@@ -126,6 +126,14 @@ The choice is remembered per browser. A login linked to a barber (under
 Kontod) sees only its own name. A line's price is: the customer's agreed
 price, else the barber's price, else the shop's price.
 
+### On a phone
+
+The tabs get their own row under the logo: Töölaud, Kiirmüük, Arved and
+Kliendid across the full width, and a **Haldus** button that opens a second
+row with Kassaraamat, Ladu, Hinnakiri, Kuu and Kontod. Haldus only lists the
+pages the account may open, so a barber with none of them switched on (under
+Kontod) never sees the button. On a wider screen every tab sits in one row.
+
 ### Migrations
 
 `src/migrations.js` holds numbered steps recorded in `schema_migrations`.

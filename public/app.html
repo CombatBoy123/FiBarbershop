@@ -12,7 +12,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,100..900&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="css/app.css?v=31">
+<link rel="stylesheet" href="css/app.css?v=32">
 </head>
 <body>
 
@@ -69,11 +69,18 @@
         <button class="navtab" type="button" data-tab="pos">Kiirmüük</button>
         <button class="navtab" type="button" data-tab="inv">Arved</button>
         <button class="navtab" type="button" data-tab="cust">Kliendid</button>
-        <button class="navtab" type="button" data-tab="cash">Kassaraamat</button>
-        <button class="navtab" type="button" data-tab="stock">Ladu</button>
-        <button class="navtab" type="button" data-tab="price">Hinnakiri</button>
-        <button class="navtab" type="button" data-tab="month">Kuu</button>
-        <button class="navtab" type="button" data-tab="admin">Kontod</button>
+        <!-- Phone only: the running-the-shop pages fold behind this button so
+             the four everyday tabs fit across the screen. On a wide screen it
+             is hidden and the pages below sit inline with the rest. -->
+        <button class="navtab navmore" type="button" id="navMore"
+                aria-expanded="false" aria-controls="navExtra">Haldus</button>
+        <div class="navextra" id="navExtra">
+          <button class="navtab" type="button" data-tab="cash">Kassaraamat</button>
+          <button class="navtab" type="button" data-tab="stock">Ladu</button>
+          <button class="navtab" type="button" data-tab="price">Hinnakiri</button>
+          <button class="navtab" type="button" data-tab="month">Kuu</button>
+          <button class="navtab" type="button" data-tab="admin">Kontod</button>
+        </div>
       </div>
     </div>
 
@@ -93,6 +100,6 @@
 
 <div class="toast hidden" id="toast" role="status" aria-live="polite"></div>
 
-<script type="module" src="js/main.js?v=31"></script>
+<script type="module" src="js/main.js?v=32"></script>
 </body>
 </html>
