@@ -44,16 +44,39 @@ const GATED_TABS = ["cust", "price", "cash", "stock", "admin", "month"];
 const TAB_AREA = { month: "admin" };
 const areaOfTab = (tab) => TAB_AREA[tab] || tab;
 
-function render() {
+// On a phone these fold behind the "Haldus" button, so the everyday tabs fit
+// across the screen. Opening it is screen state only, kept here and not in S.
+const EXTRA_TABS = ["cash", "stock", "price", "month", "admin"];
+let navExtraOpen = false;
+
+const navEl = document.querySelector(".nav");
+const navMoreBtn = document.getElementById("navMore");
+
+// Repaints the tab bar alone. Opening "Haldus" goes through here rather than
+// render(), which rebuilds the screen and would lose a half-filled form.
+function renderNav() {
+  let extrasShown = 0;
   for (const b of document.querySelectorAll(".navtab[data-tab]")) {
     const tab = b.dataset.tab;
     b.hidden = GATED_TABS.includes(tab) && !can(areaOfTab(tab));
     b.classList.toggle("on", tab === S.tab);
     b.setAttribute("aria-selected", String(tab === S.tab));
+    if (EXTRA_TABS.includes(tab) && !b.hidden) extrasShown++;
   }
+  // A barber with none of these pages switched on gets no button at all.
+  navMoreBtn.hidden = extrasShown === 0;
+  const open = navExtraOpen && extrasShown > 0;
+  navEl.classList.toggle("extraopen", open);
+  navMoreBtn.setAttribute("aria-expanded", String(open));
+  // Folded away while one of its pages is on screen: the button says so.
+  navMoreBtn.classList.toggle("has", EXTRA_TABS.includes(S.tab));
+}
+
+function render() {
   // An owner revoking an area while that screen is open leaves nowhere to
   // stand, so fall back to the till.
   if (GATED_TABS.includes(S.tab) && !can(areaOfTab(S.tab))) S.tab = "pos";
+  renderNav();
 
   const view = VIEWS[S.tab] || VIEWS.pos;
   clear(viewEl).append(...view(actions));
@@ -176,6 +199,9 @@ let saleBusy = false;
 const actions = {
   goto(tab) {
     S.tab = tab;
+    // Arriving at one of the folded pages (also from Töölaud's "Ladu" button)
+    // shows the row it lives in; going back to an everyday tab folds it away.
+    navExtraOpen = EXTRA_TABS.includes(tab);
     render();
   },
 
@@ -799,6 +825,11 @@ document.getElementById("logoutBtn").addEventListener("click", () => signOut("")
 for (const b of document.querySelectorAll(".navtab[data-tab]")) {
   b.addEventListener("click", () => actions.goto(b.dataset.tab));
 }
+
+navMoreBtn.addEventListener("click", () => {
+  navExtraOpen = !navExtraOpen;
+  renderNav();
+});
 
 for (const b of document.querySelectorAll("[data-theme]")) {
   b.addEventListener("click", () => applyTheme(b.dataset.theme));

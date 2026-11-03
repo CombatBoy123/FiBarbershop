@@ -70,6 +70,11 @@ a:hover { color: var(--acc); }
 .navtab:focus-visible { outline:2px solid var(--acc); outline-offset:2px; }
 a.navtab { text-decoration:none; }
 
+/* "Haldus" exists for the phone layout only. On a wide screen its pages sit
+   inline with the other tabs, exactly as if the wrapper were not there. */
+.navmore { display:none; }
+.navextra { display:contents; }
+
 /* Logo and "Koduleht" both leave the app for the public site. The phone nav
    has no room for the text button, so there the logo carries it alone. */
 .navhome { display:block; flex:none; }
@@ -350,15 +355,32 @@ a.navtab { text-decoration:none; }
 
 @media (max-width:760px) {
   .wrap { padding:12px; gap:14px; }
-  .nav { padding:11px 12px; gap:10px; }
-  .navleft { gap:12px; flex:1 1 auto; min-width:0; }
-  .navright { gap:10px; }
-  .brandlogo { height:36px; }
+  /* Two rows. Logo, theme and logout on top; below, the everyday tabs share
+     the full width equally. "Haldus" opens a third row with the pages for
+     running the shop (Kassaraamat, Ladu, Hinnakiri, Kuu, Kontod). */
+  .nav { flex-wrap:wrap; padding:8px 12px 0; gap:6px 10px; }
+  .navleft { display:contents; }
+  .navright { gap:10px; margin-left:auto; }
+  .brandlogo { height:34px; }
   .navdate { display:none; }
   .navtab.navhometab { display:none; }
-  .navtabs { gap:0; -webkit-overflow-scrolling:touch; scrollbar-width:none; }
-  .navtabs::-webkit-scrollbar { display:none; }
   .navtab { padding:10px 13px; font-size:14px; }
+  .navtabs { order:1; flex:0 0 calc(100% + 24px); margin:0 -12px; flex-wrap:wrap; gap:0; }
+  .navtabs > .navtab { flex:1 1 0; min-width:0; padding:12px 4px; font-size:13px; text-align:center;
+                       overflow:hidden; text-overflow:ellipsis; }
+  .navmore { display:block; }
+  .navmore[hidden] { display:none; }
+  .navmore::after { content:""; display:inline-block; width:5px; height:5px; margin-left:7px;
+                    border-right:1.5px solid currentColor; border-bottom:1.5px solid currentColor;
+                    transform:translateY(-3px) rotate(45deg); }
+  .navmore[aria-expanded="true"] { background:#1B232C; color:#EDEFF0; }
+  .navmore[aria-expanded="true"]::after { transform:translateY(0) rotate(-135deg); }
+  /* Folded away while one of its pages is open: mark where you are. */
+  .navmore.has { color:var(--acc); }
+  .navmore.has[aria-expanded="false"] { box-shadow:inset 0 -2px 0 var(--acc); }
+  .navextra { display:none; flex:0 0 100%; flex-wrap:wrap; background:#1B232C; }
+  .nav.extraopen .navextra { display:flex; }
+  .navextra .navtab { flex:1 1 auto; padding:12px 8px; font-size:13px; text-align:center; }
   .tgl button { padding:7px 9px; font-size:11px; }
 
   .h1 { font-size:24px; line-height:26px; }
