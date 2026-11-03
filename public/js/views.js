@@ -58,6 +58,16 @@ const field = (label, input) => h("label", { class: "fld" }, h("span", { class: 
 
 const inp = (attrs) => h("input", { class: "inp", ...attrs });
 
+// A text field that saves itself when it loses focus with a changed value.
+// A required one that is emptied goes back to what it was.
+const textCell = (value, label, onSave, attrs = {}) =>
+  inp({ type: "text", value, "aria-label": label, ...attrs,
+        onchange: (e) => {
+          const v = e.target.value.trim();
+          if (!v && attrs.required) { e.target.value = value; return; }
+          if (v !== value) onSave(v);
+        } });
+
 function select(attrs, options, current) {
   return h("select", { class: "inp", ...attrs },
     ...options.map((o) => {
@@ -417,7 +427,19 @@ export function viewPos(actions) {
 // under each line, follow this. A barber's own login is tied to their chair
 // and sees only their name here.
 function chairPicker(actions) {
-  if (!S.barbers.length) return null;
+  // The owner gets a way from the chairs to the list they come from, under
+  // Kontod — also when there are no barbers yet to pick from.
+  const manage = isOwner()
+    ? h("button", { class: "btng sm chairmanage", type: "button",
+                    title: "Lisa, muuda või eemalda barbereid (Kontod)",
+                    onclick: actions.manageBarbers },
+        S.barbers.length ? "Halda barbereid" : "+ Lisa barber")
+    : null;
+  if (!S.barbers.length) {
+    return manage
+      ? h("div", { class: "chair" }, h("p", { class: "thr", text: "Kassas", style: "margin:0" }), manage)
+      : null;
+  }
   const locked = lockedBarber();
   const chair = activeBarber();
   return h("div", { class: "chair" },
@@ -434,7 +456,8 @@ function chairPicker(actions) {
               onclick: () => actions.pickChair(b.id),
             }, b.name)
           )
-        )
+        ),
+    manage
   );
 }
 
@@ -850,14 +873,6 @@ export function viewPrices(actions) {
 
   // Name and note are edited in place like the price: change the field, leave
   // it, and it is saved. An emptied name is put back rather than sent.
-  const textCell = (value, label, onSave, attrs = {}) =>
-    inp({ type: "text", value, "aria-label": label, ...attrs,
-          onchange: (e) => {
-            const v = e.target.value.trim();
-            if (!v && attrs.required) { e.target.value = value; return; }
-            if (v !== value) onSave(v);
-          } });
-
   const serviceRows = S.services.map((s) =>
     h("div", { class: "row", style: "grid-template-columns:minmax(0,1.4fr) 100px minmax(0,1fr) 28px" },
       textCell(s.name, "Teenus", (name) => actions.saveService(s, { name }), { required: true, maxlength: "200" }),
@@ -949,41 +964,10 @@ export function viewPrices(actions) {
       })
     : [];
 
-  const barberForm = { name: "", tier: "", phone: "" };
-  const barberAdmin = isOwner()
-    ? panel({},
-        h("p", { class: "thr", text: "Barberid", style: "margin:0 0 12px" }),
-        picked
-          ? h("div", { class: "formrow" },
-              field("Nimi", textCell(picked.name, "Barberi nimi", (name) => actions.saveBarber(picked, { name }),
-                { required: true, maxlength: "120" })),
-              field("Tase", textCell(picked.tier || "", "Tase", (tier) => actions.saveBarber(picked, { tier }),
-                { placeholder: "Nt. Meister", maxlength: "60" })),
-              field("Telefon", textCell(picked.phone || "", "Telefon", (phone) => actions.saveBarber(picked, { phone }),
-                { maxlength: "40" }))
-            )
-          : null,
-        picked
-          ? h("button", { class: "btng sm", type: "button", style: "margin-top:10px",
-                          onclick: () => actions.removeBarber(picked) }, "Eemalda " + picked.name)
-          : null,
-        h("p", { class: "thr", text: "Uus barber", style: "margin:16px 0 8px" }),
-        h("div", { class: "formrow" },
-          field("Nimi", inp({ type: "text", maxlength: "120", placeholder: "Nt. Barber Mari",
-            oninput: (e) => (barberForm.name = e.target.value) })),
-          field("Tase", inp({ type: "text", maxlength: "60", placeholder: "Nt. Rookie",
-            oninput: (e) => (barberForm.tier = e.target.value) })),
-          field("Telefon", inp({ type: "text", maxlength: "40",
-            oninput: (e) => (barberForm.phone = e.target.value) })),
-          h("button", { class: "btnp", type: "button", onclick: () => actions.createBarber(barberForm) }, "+ Lisa")
-        ),
-        note("Konto sidumine barberiga käib Kontode all. Seotud konto näeb kassas ainult enda nime ja hindu.",
-          "margin:12px 0 0")
-      )
-    : null;
-
+  // Barbers themselves are added, renamed and removed under Kontod; this
+  // screen is only about what each of them charges.
   const barberBlock = !picked
-    ? null
+    ? (isOwner() ? note("Barbereid pole. Lisa need Kontode all („Barberid“).", "margin:0") : null)
     : h("div", {},
         h("div", { style: "display:flex;justify-content:space-between;align-items:center;gap:12px;margin:0 0 10px;flex-wrap:wrap" },
           h("p", { class: "thr", text: "Barberi hinnad", style: "margin:0" }),
@@ -1003,7 +987,8 @@ export function viewPrices(actions) {
           barberRows, "Teenuseid pole."),
         note("Need hinnad ilmuvad kassas, kui see barber on valitud. Märkeruudu eemaldamine " +
           "kriipsutab teenuse tema all läbi ja seda ei saa talle arvele lisada. " +
-          "Salongi enda tavahind ülal jääb puutumata.", "margin:10px 0 0")
+          "Salongi enda tavahind ülal jääb puutumata." +
+          (isOwner() ? " Barbereid lisad ja eemaldad Kontode all." : ""), "margin:10px 0 0")
       );
 
   return [
@@ -1029,7 +1014,6 @@ export function viewPrices(actions) {
       ),
 
       h("div", { class: "stack" },
-        barberAdmin,
         panel({},
           h("p", { class: "thr", text: "Arve seaded", style: "margin:0 0 12px" }),
           h("label", { class: "check", style: "margin-bottom:12px" },
@@ -1273,6 +1257,48 @@ export function viewAdmin(actions) {
     );
   });
 
+  // The chairs. A barber is not a login — a guest barber may never get one —
+  // so they are listed on their own; the Barber column above ties a login to
+  // one of them. Only the owner manages this list.
+  const barberGrid = "minmax(0,1.3fr) minmax(0,1fr) minmax(0,1fr) minmax(0,1.2fr) 110px";
+  const barberRows = S.barbers.map((b) => {
+    const acc = S.staff.find((u) => u.id === b.account_id);
+    return h("div", { class: "row staffrow barberrow", style: "grid-template-columns:" + barberGrid },
+      textCell(b.name, "Barberi nimi", (name) => actions.saveBarber(b, { name }),
+        { required: true, maxlength: "120" }),
+      textCell(b.tier || "", "Tase: " + b.name, (tier) => actions.saveBarber(b, { tier }),
+        { placeholder: "Tase", maxlength: "60" }),
+      textCell(b.phone || "", "Telefon: " + b.name, (phone) => actions.saveBarber(b, { phone }),
+        { placeholder: "Telefon", maxlength: "40" }),
+      h("span", { class: "tr" + (acc ? "" : " dim"), title: "Seotud konto",
+                  text: acc ? (acc.name || acc.email) : "konto sidumata" }),
+      h("button", { class: "btng", type: "button", title: "Eemalda " + b.name,
+                    onclick: () => actions.removeBarber(b) }, "Eemalda")
+    );
+  });
+
+  const newBarber = { name: "", tier: "", phone: "" };
+  const barberSection = isOwner()
+    ? h("div", { class: "barbertbl", id: "barberid" },
+        h("p", { class: "thr", text: "Barberid", style: "margin:0 0 10px" }),
+        table(barberGrid, ["Nimi", "Tase", "Telefon", "Seotud konto", ""],
+          barberRows, "Barbereid pole. Lisa esimene allpool."),
+        h("div", { class: "formrow", style: "margin-top:10px" },
+          field("Uus barber", inp({ type: "text", maxlength: "120", placeholder: "Nt. Barber Mari",
+            autocomplete: "off", oninput: (e) => (newBarber.name = e.target.value) })),
+          field("Tase", inp({ type: "text", maxlength: "60", placeholder: "Nt. Rookie",
+            autocomplete: "off", oninput: (e) => (newBarber.tier = e.target.value) })),
+          field("Telefon", inp({ type: "text", maxlength: "40", autocomplete: "off",
+            oninput: (e) => (newBarber.phone = e.target.value) })),
+          h("button", { class: "btnp", type: "button",
+                        onclick: () => actions.createBarber(newBarber) }, "+ Lisa barber")
+        ),
+        note("Uus barber ilmub kohe kassasse ja alustab salongi hinnakirjaga — tema hinnad muudad " +
+          "Hinnakirja all. Eemaldatud barber kaob kassa valikust; tema varasemad arved ja kuu " +
+          "kokkuvõte jäävad alles. Konto seod barberiga ülal, tabelis Töötajad.", "margin:10px 0 0")
+      )
+    : null;
+
   const auditRows = S.audit.map((a) =>
     h("div", { class: "row", style: "grid-template-columns:128px 1fr 1fr" },
       h("span", { class: "tr mono", text: dateTimeET(a.created_at) }),
@@ -1304,7 +1330,9 @@ export function viewAdmin(actions) {
             "Arvete kustutamine (tühistamine ja jäädav kustutamine) on barberitel vaikimisi sees. " +
             "Arve makstuks märkimine ning kontode haldus jäävad alati ainult omanikule, " +
             "ka siis kui Kontod on kellelegi lubatud.")
-        )
+        ),
+
+        barberSection
     ),
 
     h("div", { class: "cols c2e" },

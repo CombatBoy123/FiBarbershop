@@ -36,9 +36,13 @@ async function loadState(shopId) {
         ORDER BY (i.status = 'mustand') DESC, i.invoice_date DESC, i.id DESC`,
       [shopId]
     ),
+    // barber_name comes from the barber row whether or not they still work
+    // here: the barber list below holds only current barbers, and a removed
+    // one's month must still be credited to them by name.
     query(
-      `SELECT l.* FROM invoice_lines l
+      `SELECT l.*, b.name AS barber_name FROM invoice_lines l
          JOIN invoices i ON i.id = l.invoice_id
+         LEFT JOIN barbers b ON b.id = l.barber_id
         WHERE i.user_id = $1 ORDER BY l.invoice_id, l.sort_order, l.id`,
       [shopId]
     ),
