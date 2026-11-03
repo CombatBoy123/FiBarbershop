@@ -175,18 +175,6 @@ a.navtab { text-decoration:none; }
 .chairbtn:focus-visible { outline:2px solid var(--acc); outline-offset:2px; }
 /* The owner's way from the chairs to Kontod → Barberid. */
 .chairmanage { margin-left:auto; }
-
-/* Hinnakiri: one row per service, the shop's own price, then every barber's
-   — whether they do it (the box) and what they charge. */
-.pricegrid .row { align-items:center; }
-.pricegrid .hrow .thr { overflow-wrap:anywhere; }
-.pcell { display:flex; align-items:center; gap:6px; min-width:0; }
-.pcell .inp { min-width:0; padding:6px 8px; text-align:right;
-              font-family:"IBM Plex Mono",monospace; font-variant-numeric:tabular-nums; }
-.pcell.off .inp { opacity:.45; }
-.pcell .permbox { flex:none; }
-/* The column's name, shown above the field only where the header is hidden. */
-.pcell .mlab { display:none; }
 .svcn { font-family:Archivo, sans-serif; font-stretch:112%; font-weight:600; font-size:17px;
         line-height:20px; letter-spacing:-.02em; color:var(--tx); }
 .svcp { font:500 16px "IBM Plex Mono", monospace; font-variant-numeric:tabular-nums; color:var(--accd); }
@@ -385,18 +373,6 @@ a.navtab { text-decoration:none; }
      too wide for the screen. Name across the top, level and phone side by
      side, then the linked login and Eemalda. */
   .barbertbl .hrow { display:none; }
-
-  /* Hinnakiri on a phone: one barber at a time (picked above the table), and
-     each service a small card — name and note across, then the shop's price
-     and the barber's side by side, each with its own label. */
-  .pricegrid .hrow { display:none; }
-  .pricegrid .row.prow { grid-template-columns:minmax(0,1fr) minmax(0,1fr) 28px !important; row-gap:8px; }
-  .pricegrid .row.prow > :nth-child(1), .pricegrid .row.prow > :nth-child(2) { grid-column:1 / -1; }
-  .pricegrid .row.prow > .del { grid-column:3; }
-  .pcell { flex-wrap:wrap; }
-  .pcell .mlab { display:block; flex:1 0 100%; font:500 10px "IBM Plex Mono",monospace;
-                 letter-spacing:.08em; text-transform:uppercase; color:var(--tx3); }
-  .pcell .inp { flex:1 1 0; }
   .row.barberrow { grid-template-columns:minmax(0,1fr) minmax(0,1fr) !important; }
   .row.barberrow > :first-child { grid-column:1 / -1; }
 
