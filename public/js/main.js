@@ -9,7 +9,7 @@ import {
   isCancelled, isLastOfMonth, can, permsOf, AREA_LABEL, monthlyByBarber,
   serviceLine, setActiveBarber, restoreActiveBarber, entryAmount,
 } from "./state.js";
-import { VIEWS, PHONE } from "./views.js";
+import { VIEWS } from "./views.js";
 import { ask, confirmAsk } from "./dialog.js";
 import { clear, toast, eur, num, dateET, todayISO, parseNum, downloadCSV } from "./util.js";
 
@@ -87,13 +87,6 @@ function render() {
   if (GATED_TABS.includes(S.tab) && !can(areaOfTab(S.tab))) S.tab = "pos";
   renderNav();
 
-  // A field saves when it is left, and the save repaints the screen. Without
-  // this the field the user had just tabbed into would lose focus, so moving
-  // along a row of prices with Tab would stop after every one.
-  const active = document.activeElement;
-  const refocus = S.tab === shownTab && active && viewEl.contains(active) &&
-    /^(INPUT|SELECT|TEXTAREA)$/.test(active.tagName) && active.getAttribute("aria-label");
-
   const view = VIEWS[S.tab] || VIEWS.pos;
   clear(viewEl).append(...view(actions));
   document.getElementById("navDate").textContent = dateET(todayISO());
@@ -101,23 +94,8 @@ function render() {
   if (S.tab !== shownTab) {
     shownTab = S.tab;
     window.scrollTo(0, 0);
-  } else if (refocus) {
-    // Only a label that names one field: "Kogus" on every draft line, say,
-    // must not send the caret to some other line.
-    const matches = viewEl.querySelectorAll('[aria-label="' + CSS.escape(refocus) + '"]');
-    const again = matches.length === 1 ? matches[0] : null;
-    if (again && !again.disabled) {
-      again.focus({ preventScroll: true });
-      if (typeof again.select === "function") again.select();
-    }
   }
 }
-
-// Hinnakiri lays its prices out differently on a phone; follow a rotation or
-// a resized window across that line.
-PHONE.addEventListener("change", () => {
-  if (S.tab === "price" && !appEl.hidden) render();
-});
 
 // Typing in a quantity, price, tip or split field must not rebuild the panel,
 // or the input would lose focus mid-keystroke. Only the derived numbers are
