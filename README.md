@@ -122,7 +122,14 @@ The barber picker is part of the till itself, above the service tiles. Each
 tile shows what the barber in the chair charges (from `barber_prices`, by
 service id) and is struck out when that barber does not perform the service.
 The choice is remembered per browser. A login linked to a barber (under
-Kontod) sees only its own name. A line's price is: the customer's agreed
+Kontod) sees only its own name.
+
+Barbers are added, renamed and removed under **Kontod → Barberid** (owner
+only); the till's "Halda barbereid" button goes straight there. A new barber
+starts on the shop's price list, and their own prices are set under
+Hinnakiri. Removing a barber takes them off the till and unlinks their login,
+but keeps their name on past invoices and in the monthly summary; adding the
+same name again brings the old record back. A line's price is: the customer's agreed
 price, else the barber's price, else the shop's price.
 
 ### On a phone

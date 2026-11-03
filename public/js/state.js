@@ -234,7 +234,9 @@ export function monthlyByBarber(month) {
       const byId = l.barber_id ? S.barbers.find((b) => b.id === l.barber_id) : null;
       const byNote = !byId && l.note ? S.barbers.find((b) => b.name === String(l.note).trim()) : null;
       const who = byId || byNote;
-      bump(who ? who.name : "Määramata", l, lineTotal(l));
+      // A removed barber is gone from S.barbers, but the server still names
+      // the barber a line was rung up under.
+      bump(who ? who.name : l.barber_name || "Määramata", l, lineTotal(l));
     }
   }
 

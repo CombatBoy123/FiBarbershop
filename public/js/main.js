@@ -775,9 +775,24 @@ const actions = {
     await write(() => api.updateBarber(barber.id, patch), { reset: true, message: "Barber salvestatud." });
   },
 
+  // From the till's chairs to the list they come from: Kontod, scrolled to
+  // Barberid so it is on screen under the tab bar, phone or desk.
+  manageBarbers() {
+    actions.goto("admin");
+    const section = document.getElementById("barberid");
+    if (!section) return;
+    const navH = document.querySelector(".nav").getBoundingClientRect().height;
+    window.scrollTo(0, section.getBoundingClientRect().top + window.scrollY - navH - 12);
+  },
+
   async removeBarber(barber) {
+    // Removing the chair drops its login link server-side; say so, since the
+    // account itself stays and keeps working.
+    const account = S.staff.find((u) => u.id === barber.account_id);
     if (!(await confirmAsk("Eemaldada barber " + barber.name + "?",
-      "Ta kaob kassa valikust. Tema varasemad arveread ja kuu kokkuvõte jäävad alles.",
+      "Ta kaob kassa valikust. Tema varasemad arveread ja kuu kokkuvõte jäävad alles." +
+        (account ? " Konto " + (account.name || account.email) +
+          " jääb alles, aga pole enam ühegi barberiga seotud." : ""),
       { confirm: "Eemalda", danger: true }))) return;
     const result = await write(() => api.removeBarber(barber.id), { message: "Barber eemaldatud." });
     if (result) {

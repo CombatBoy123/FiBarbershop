@@ -173,6 +173,8 @@ a.navtab { text-decoration:none; }
 .chairbtn:hover { border-color:var(--acc); }
 .chairbtn.on { border-color:var(--acc); background:var(--tint); color:var(--accd); }
 .chairbtn:focus-visible { outline:2px solid var(--acc); outline-offset:2px; }
+/* The owner's way from the chairs to Kontod → Barberid. */
+.chairmanage { margin-left:auto; }
 .svcn { font-family:Archivo, sans-serif; font-stretch:112%; font-weight:600; font-size:17px;
         line-height:20px; letter-spacing:-.02em; color:var(--tx); }
 .svcp { font:500 16px "IBM Plex Mono", monospace; font-variant-numeric:tabular-nums; color:var(--accd); }
@@ -367,6 +369,13 @@ a.navtab { text-decoration:none; }
   .navright { gap:10px; margin-left:auto; }
   .brandlogo { height:34px; }
   .navdate { display:none; }
+  /* Kontod → Barberid: each barber becomes a small card instead of a row
+     too wide for the screen. Name across the top, level and phone side by
+     side, then the linked login and Eemalda. */
+  .barbertbl .hrow { display:none; }
+  .row.barberrow { grid-template-columns:minmax(0,1fr) minmax(0,1fr) !important; }
+  .row.barberrow > :first-child { grid-column:1 / -1; }
+
   /* Kliendid is kept off the phone; the till's own customer picker still
      works there. */
   .navtab[data-tab="cust"] { display:none; }

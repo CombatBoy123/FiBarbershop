@@ -451,8 +451,20 @@ async function call(token, method, path, body) {
     ok("uus barber alustab salongi hinnakirjaga",
       Number(added.data.state.barbers.find((b) => b.id === added.data.barber.id)
         .prices[hair.id].price) === Number(hair.price));
-    ok("barberi saab eemaldada",
-      (await call(OT, "DELETE", "/api/barbers/" + added.data.barber.id)).status === 200);
+    // A sale under the new barber, then remove them: the line must still say
+    // whose it was, or Kuu credits their month to "Määramata".
+    const testSale = await call(OT, "POST", "/api/sales", {
+      lines: [{ serviceId: hair.id, barberId: added.data.barber.id, name: "Juukselõikus", qty: 1, price: 30 }],
+      cash: 30, card: 0,
+    });
+    const removedBarber = await call(OT, "DELETE", "/api/barbers/" + added.data.barber.id);
+    ok("barberi saab eemaldada", removedBarber.status === 200);
+    const keptLine = removedBarber.data.state.invoices
+      .find((i) => i.id === testSale.data.invoice.id).lines[0];
+    ok("EEMALDATUD BARBERI ARVERIDA KANNAB TEMA NIME (kuu kokkuvõttes mitte „Määramata“)",
+      !removedBarber.data.state.barbers.some((b) => b.id === added.data.barber.id) &&
+        keptLine.barber_name === "Barber Test",
+      keptLine && keptLine.barber_name);
 
     // Every check below failed on the code this rework started from.
     console.log("\n11. Parandatud vead");
