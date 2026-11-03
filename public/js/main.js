@@ -72,6 +72,15 @@ function renderNav() {
   navMoreBtn.classList.toggle("has", EXTRA_TABS.includes(S.tab));
 }
 
+// The screen on show at the last render. Another screen opens at its top;
+// otherwise finishing a sale, whose button sits at the foot of a long till,
+// left Arved scrolled down to the bottom.
+let shownTab = null;
+
+// Matches the CSS breakpoint where Arved becomes one column, with the open
+// invoice above the list.
+const ONE_COLUMN = window.matchMedia("(max-width:1000px)");
+
 function render() {
   // An owner revoking an area while that screen is open leaves nowhere to
   // stand, so fall back to the till.
@@ -81,6 +90,11 @@ function render() {
   const view = VIEWS[S.tab] || VIEWS.pos;
   clear(viewEl).append(...view(actions));
   document.getElementById("navDate").textContent = dateET(todayISO());
+
+  if (S.tab !== shownTab) {
+    shownTab = S.tab;
+    window.scrollTo(0, 0);
+  }
 }
 
 // Typing in a quantity, price, tip or split field must not rebuild the panel,
@@ -209,6 +223,9 @@ const actions = {
     S.selectedInvoiceId = id;
     S.tab = "inv";
     render();
+    // In one column the invoice opens above the list, so a tap far down the
+    // list must bring the page back up to it.
+    if (ONE_COLUMN.matches) window.scrollTo(0, 0);
   },
 
   // ---- who is in the chair

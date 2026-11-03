@@ -538,7 +538,7 @@ export function viewInvoices(actions) {
               "ei ole sinu kontole lubatud.")
       ),
       selected
-        ? h("div", { class: "stack" },
+        ? h("div", { class: "stack invopen" },
             // An invoice that asks for a transfer but names no account cannot
             // be paid. Said here, on screen only — never printed.
             (isUnpaid(selected) || isDraft(selected)) && !(S.settings && S.settings.company_iban)

@@ -1,31 +1,23 @@
-// routes/site.js — the public shop front and the till's own page.
+// routes/site.js — the till's own page, and what the bare address does.
 //
-// The shop front is a saved copy of fibarbers.ee living in public/site. Its
-// pages carry <base href="/site/"> so their relative assets resolve no matter
-// which URL served them, and its internal links are root-absolute — so the
-// original paths are mapped here rather than rewritten in the HTML.
+// The server used to show a saved copy of the public shop front at "/". The
+// real shop lives at fibarbers.ee, so the copy is gone and the address opens
+// the till.
 
 const path = require("path");
 const express = require("express");
 
-const { SITE_URL } = require("../config");
-
 const PUBLIC = path.join(__dirname, "..", "..", "public");
-const SITE = path.join(PUBLIC, "site");
 
 const router = express.Router();
 
-const sitePage = (file) => (req, res) => res.sendFile(path.join(SITE, file));
-
-router.get("/", sitePage("home.html"));
-router.get("/pages/broneeri-aeg", sitePage("broneeri.html"));
-router.get("/collections/all", sitePage("tooted.html"));
-router.get("/pages/contact", sitePage("kontakt.html"));
+// 302, not 301: a browser remembers a permanent redirect for good, and "/"
+// may want to become something else one day.
+router.get("/", (req, res) => res.redirect(302, "/app"));
 
 // The till. It loads only same-origin code and Google Fonts and has no inline
-// <script>, so it can carry a strict Content-Security-Policy — which the saved
-// storefront pages cannot, hence scoping it to this route. 'unsafe-inline' is
-// kept for style only, because the design uses inline style attributes.
+// <script>, so it can carry a strict Content-Security-Policy. 'unsafe-inline'
+// is kept for style only, because the design uses inline style attributes.
 const APP_CSP = [
   "default-src 'self'",
   "script-src 'self'",
@@ -52,12 +44,8 @@ router.get("/app", (req, res) => {
 // There is only one page; anything below it goes back to it.
 router.get("/app/*", (req, res) => res.redirect(301, "/app"));
 
-// Everything the saved copy does not cover — a product page, a policy, the
-// English version — lives on the real shop, so send it there rather than
-// showing a page that half works. Forms on the saved pages (contact, cart,
-// language) post to paths this server has no handler for; 307 keeps the
-// method and body, so the post reaches the real shop instead of a 404.
-router.get("*", (req, res) => res.redirect(302, SITE_URL + req.originalUrl));
-router.post("*", (req, res) => res.redirect(307, SITE_URL + req.originalUrl));
+// Nothing else is served here. A plain 404 rather than a redirect, so a stray
+// request (an old shop-front link, a /favicon.ico) is not answered with HTML.
+router.use((req, res) => res.status(404).type("text").send("Lehte ei leitud."));
 
 module.exports = router;

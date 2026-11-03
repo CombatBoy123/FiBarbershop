@@ -49,8 +49,6 @@ module.exports = {
     .filter(Boolean),
   ALLOW_PUBLIC_REGISTER: process.env.ALLOW_PUBLIC_REGISTER === "1",
   SHOP_TZ,
-  // Where the parts of the storefront that were never saved locally live.
-  SITE_URL: (process.env.SITE_URL || "https://fibarbers.ee").replace(/\/+$/, ""),
   // A way back in when nobody can log in (see adminAccount.js). Set them in
   // Render's Environment settings, never in the repository.
   ADMIN_EMAIL: process.env.ADMIN_EMAIL || "",

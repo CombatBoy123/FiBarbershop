@@ -27,7 +27,7 @@ SEED_EMAIL=info@fibarbers.ee SEED_PASSWORD='…' npm run seed-user
 
 | Command | What it does |
 | --- | --- |
-| `npm start` | Bring the schema up to date, then serve the till, the API and the saved shop front |
+| `npm start` | Bring the schema up to date, then serve the till and the API (`/` opens the till) |
 | `npm run dev` | Same, restarting on file changes |
 | `npm run migrate` | Only run pending database migrations |
 | `npm test` | Unit tests, then the end-to-end smoke test against a throwaway shop |
@@ -78,7 +78,7 @@ never reads or writes the real shop's books.
 ```
 src/
   server.js        migrate, then listen; graceful shutdown on SIGTERM
-  app.js           the Express app: headers, /api, static files, shop front
+  app.js           the Express app: headers, /api, static files, the till's page
   config.js        every environment variable, checked once at startup
   db.js            Postgres pool, transactions, cents/euros helpers
   migrations.js    numbered schema steps, each run exactly once
@@ -95,7 +95,6 @@ public/
   app.html         the till (strict CSP)
   js/              main.js (actions), state.js (store + derived figures),
                    views.js (screens), dialog.js (modal), api.js, util.js
-  site/            saved copy of the public shop front
 ```
 
 ### Invoices
@@ -128,11 +127,16 @@ price, else the barber's price, else the shop's price.
 
 ### On a phone
 
-The tabs get their own row under the logo: Töölaud, Kiirmüük, Arved and
-Kliendid across the full width, and a **Haldus** button that opens a second
-row with Kassaraamat, Ladu, Hinnakiri, Kuu and Kontod. Haldus only lists the
-pages the account may open, so a barber with none of them switched on (under
-Kontod) never sees the button. On a wider screen every tab sits in one row.
+The tabs get their own row under the logo: Töölaud, Kiirmüük and Arved
+across the full width, and a **Haldus** button that opens a second row with
+Kassaraamat, Ladu, Hinnakiri, Kuu and Kontod. Haldus only lists the pages the
+account may open, so a barber with none of them switched on (under Kontod)
+never sees the button. Kliendid is left off the phone; the till's customer
+picker still works there. On a wider screen every tab sits in one row.
+
+Every screen opens at its top. In one column (phone or tablet) Arved shows
+the open invoice above the list, so a finished sale lands on its invoice.
+Scrolling up stops at the tab bar instead of bouncing the page down past it.
 
 ### Migrations
 
@@ -192,8 +196,6 @@ and each has a regression check in `scripts/smoke-test.js` (section 11).
 * Kassaraamat is shown a month at a time with a month-end balance.
 * Deleting a cash-book entry or a stock movement by hand, and every stocktake,
   now leaves an audit row.
-* The contact, cart and language forms on the saved shop pages posted to
-  paths this server did not handle; they now reach the live shop.
 
 ## Upgrading an existing database
 

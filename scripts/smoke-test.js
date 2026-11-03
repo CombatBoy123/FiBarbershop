@@ -562,10 +562,12 @@ async function call(token, method, path, body) {
       (await call(OT, "DELETE", "/api/stock-movements/" + inMove.data.movement.id)).status === 409);
 
     const raw = (method, path) => fetch(BASE + path, { method: method, redirect: "manual" });
-    const contact = await raw("POST", "/contact");
-    ok("KODULEHE KONTAKTIVORM JÕUAB PÄRIS POODI (307)",
-      contact.status === 307 && /fibarbers\.ee\/contact$/.test(contact.headers.get("location")),
-      contact.status + " " + contact.headers.get("location"));
+    const root = await raw("GET", "/");
+    ok("/ avab kassa (koduleht on eemaldatud)",
+      root.status === 302 && root.headers.get("location") === "/app",
+      root.status + " " + root.headers.get("location"));
+    ok("vana kodulehe aadress annab 404, mitte HTML-i",
+      (await raw("GET", "/pages/broneeri-aeg")).status === 404);
     const appPage = await raw("GET", "/app");
     ok("/app kannab turvapoliitikat", /script-src 'self'/.test(appPage.headers.get("content-security-policy") || ""));
     ok("/app/ suunab /app lehele (varem tuli CSS asemel HTML)", (await raw("GET", "/app/")).status === 301);
