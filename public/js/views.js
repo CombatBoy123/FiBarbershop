@@ -58,6 +58,10 @@ const field = (label, input) => h("label", { class: "fld" }, h("span", { class: 
 
 const inp = (attrs) => h("input", { class: "inp", ...attrs });
 
+// The phone layout, as in app.css. A screen that lays out differently there
+// reads this; main.js renders again when it flips.
+export const PHONE = window.matchMedia("(max-width:760px)");
+
 // A text field that saves itself when it loses focus with a changed value.
 // A required one that is emptied goes back to what it was.
 const textCell = (value, label, onSave, attrs = {}) =>
@@ -871,16 +875,51 @@ export function viewStock(actions) {
 export function viewPrices(actions) {
   const st = S.settings || {};
 
-  // Name and note are edited in place like the price: change the field, leave
-  // it, and it is saved. An emptied name is put back rather than sent.
+  // Whose prices show beside the shop's own. The owner sees every barber
+  // side by side — on a phone, where the columns do not fit, one at a time
+  // from a picker. Anyone else sees only the barber their account is linked
+  // to, which is what makes "my own prices" work without a picker.
+  const own = myBarber();
+  const picked = isOwner()
+    ? (barberById(S.selectedBarberId) || S.barbers[0] || null)
+    : own;
+  const onePerScreen = isOwner() && PHONE.matches && S.barbers.length > 1;
+  const cols = isOwner() ? (onePerScreen ? [picked] : S.barbers) : (own ? [own] : []);
+
+  const priceGrid = "minmax(140px,1.4fr) minmax(110px,1fr) 88px" +
+    (cols.length ? " repeat(" + cols.length + ", minmax(104px,1fr))" : "") + " 28px";
+
+  // A number field with the small label a phone shows above it, where the
+  // table's header row is hidden.
+  const priceInput = (attrs) =>
+    inp({ type: "number", min: "0", step: "0.01", ...attrs });
+
+  // One row per service: its name and note, the shop's own price, then what
+  // each barber charges and whether they do it at all. Every field saves when
+  // it is left, like everywhere else in the app.
   const serviceRows = S.services.map((s) =>
-    h("div", { class: "row", style: "grid-template-columns:minmax(0,1.4fr) 100px minmax(0,1fr) 28px" },
-      textCell(s.name, "Teenus", (name) => actions.saveService(s, { name }), { required: true, maxlength: "200" }),
-      inp({ type: "number", min: "0", step: "0.01", value: String(Number(s.price)),
-            "aria-label": "Hind: " + s.name,
-            onchange: (e) => actions.saveService(s, { price: parseNum(e.target.value) }) }),
+    h("div", { class: "row prow", style: "grid-template-columns:" + priceGrid },
+      textCell(s.name, "Teenuse nimi: " + s.name, (name) => actions.saveService(s, { name }),
+        { required: true, maxlength: "200" }),
       textCell(s.note || "", "Märkus: " + s.name, (v) => actions.saveService(s, { note: v }),
         { placeholder: "Märkus", maxlength: "200" }),
+      h("div", { class: "pcell" },
+        h("span", { class: "mlab", text: "Tavahind" }),
+        priceInput({ value: String(Number(s.price)), "aria-label": "Tavahind: " + s.name,
+          onchange: (e) => actions.saveService(s, { price: parseNum(e.target.value) }) })),
+      ...cols.map((b) => {
+        const bp = barberPrice(b, s);
+        return h("div", { class: "pcell" + (bp.offered ? "" : " off"),
+                          title: bp.offered ? null : b.name + " seda teenust ei paku" },
+          h("span", { class: "mlab", text: b.name }),
+          h("label", { class: "permbox", title: "Kas " + b.name + " seda teeb" },
+            h("input", { type: "checkbox", checked: bp.offered,
+              "aria-label": b.name + " pakub: " + s.name,
+              onchange: (e) => actions.setBarberPrice(b, s, bp.price, e.target.checked) })),
+          priceInput({ value: String(bp.price), disabled: !bp.offered,
+            "aria-label": b.name + " hind: " + s.name,
+            onchange: (e) => actions.setBarberPrice(b, s, parseNum(e.target.value), true) }));
+      }),
       h("button", { class: "del", type: "button", title: "Eemalda teenus",
                     onclick: () => actions.removeService(s) }, "×")
     )
@@ -890,11 +929,39 @@ export function viewPrices(actions) {
   const addServiceRow = h("div", { class: "formrow", style: "margin-top:10px" },
     field("Uus teenus", inp({ type: "text", maxlength: "200", placeholder: "Nt. Laste lõikus",
       oninput: (e) => (svcForm.name = e.target.value) })),
-    field("Hind", inp({ type: "number", min: "0", step: "0.01", placeholder: "0,00",
+    field("Tavahind", inp({ type: "number", min: "0", step: "0.01", placeholder: "0,00",
       oninput: (e) => (svcForm.price = e.target.value) })),
     field("Märkus", inp({ type: "text", maxlength: "200", placeholder: "Nt. 30 min",
       oninput: (e) => (svcForm.note = e.target.value) })),
     h("button", { class: "btnp", type: "button", onclick: () => actions.createService(svcForm) }, "+ Lisa")
+  );
+
+  const priceBlock = h("div", { class: "pricegrid" },
+    h("div", { style: "display:flex;justify-content:space-between;align-items:center;gap:12px;margin:0 0 10px;flex-wrap:wrap" },
+      h("p", { class: "thr", text: "Teenused ja hinnad", style: "margin:0" }),
+      onePerScreen
+        ? select(
+            { style: "width:auto;min-width:190px", "aria-label": "Kelle hinnad",
+              onchange: (e) => actions.pickBarber(Number(e.target.value)) },
+            S.barbers.map((b) => ({ value: b.id, label: b.name + (b.tier ? " · " + b.tier : "") })),
+            picked.id)
+        : null
+    ),
+    table(priceGrid,
+      ["Teenus", "Märkus", { label: "Tavahind", r: true },
+       ...cols.map((b) => ({ label: b.name, r: true })), ""],
+      serviceRows, "Teenuseid pole."),
+    addServiceRow,
+    note(
+      (cols.length
+        ? "Kassas kehtib barberi hind — selle, kes on Kiirmüügis valitud. Märkeruut ütleb, kas " +
+          "barber seda teenust teeb; ilma selleta on teenus tema all läbi kriipsutatud. " +
+          "Tavahind on algushind: selle saab uus barber ja uus teenus kõigil barberitel."
+        : isOwner()
+          ? "Barbereid pole, seega kassas kehtib tavahind."
+          : "Kassas kehtib barberi hind. Sinu konto pole barberiga seotud, seega siin on ainult tavahind.") +
+      (isOwner() ? " Barbereid lisad ja eemaldad Kontode all." : ""),
+      "margin:10px 0 0")
   );
 
   const productRows = S.products.map((p) =>
@@ -933,77 +1000,15 @@ export function viewPrices(actions) {
       }),
     }));
 
-  // Whose prices are being edited. The owner picks from all of them; anyone
-  // else sees only the barber their account is linked to, which is what makes
-  // "my own prices" work without handing out a picker.
-  const own = myBarber();
-  const picked = isOwner()
-    ? (barberById(S.selectedBarberId) || S.barbers[0] || null)
-    : own;
-
-  const barberRows = picked
-    ? S.services.map((s) => {
-        const bp = barberPrice(picked, s);
-        return h("div", { class: "row", style: "grid-template-columns:1fr 90px 70px 110px" },
-          h("span", { class: "tr" + (bp.offered ? "" : " dim struck"), text: s.name }),
-          h("span", { class: "tr mono r dim", text: num(s.price) }),
-          h("label", { class: "permbox", title: "Kas " + picked.name + " seda teeb" },
-            h("input", {
-              type: "checkbox", checked: bp.offered,
-              "aria-label": "Pakub: " + s.name,
-              onchange: (e) => actions.setBarberPrice(picked, s, bp.price, e.target.checked),
-            })
-          ),
-          inp({
-            type: "number", min: "0", step: "0.01", value: String(bp.price),
-            disabled: !bp.offered,
-            "aria-label": picked.name + " hind: " + s.name,
-            onchange: (e) => actions.setBarberPrice(picked, s, parseNum(e.target.value), true),
-          })
-        );
-      })
-    : [];
-
-  // Barbers themselves are added, renamed and removed under Kontod; this
-  // screen is only about what each of them charges.
-  const barberBlock = !picked
-    ? (isOwner() ? note("Barbereid pole. Lisa need Kontode all („Barberid“).", "margin:0") : null)
-    : h("div", {},
-        h("div", { style: "display:flex;justify-content:space-between;align-items:center;gap:12px;margin:0 0 10px;flex-wrap:wrap" },
-          h("p", { class: "thr", text: "Barberi hinnad", style: "margin:0" }),
-          // The picker is the owner's. A barber reaching this screen sees the
-          // one name their account is attached to and nobody else's.
-          isOwner()
-            ? select(
-                { style: "width:auto;min-width:190px", "aria-label": "Barber",
-                  onchange: (e) => actions.pickBarber(Number(e.target.value)) },
-                S.barbers.map((b) => ({ value: b.id, label: b.name + (b.tier ? " · " + b.tier : "") })),
-                picked.id
-              )
-            : h("span", { class: "pill pos", text: picked.name })
-        ),
-        table("1fr 90px 70px 110px",
-          ["Teenus", { label: "Tavahind", r: true }, { label: "Pakub", r: true }, { label: "Hind", r: true }],
-          barberRows, "Teenuseid pole."),
-        note("Need hinnad ilmuvad kassas, kui see barber on valitud. Märkeruudu eemaldamine " +
-          "kriipsutab teenuse tema all läbi ja seda ei saa talle arvele lisada. " +
-          "Salongi enda tavahind ülal jääb puutumata." +
-          (isOwner() ? " Barbereid lisad ja eemaldad Kontode all." : ""), "margin:10px 0 0")
-      );
-
   return [
     head("Teenused, tooted ja käibemaks", "Hinnakiri"),
 
+    // Full width: with every barber beside the shop's price there is no room
+    // for a second column next to it.
+    priceBlock,
+
     h("div", { class: "cols c2" },
       h("div", { class: "stack" },
-        h("div", {},
-          h("p", { class: "thr", text: "Teenused", style: "margin:0 0 10px" }),
-          table("minmax(0,1.4fr) 100px minmax(0,1fr) 28px",
-            ["Teenus", { label: "Hind", r: true }, "Märkus", ""], serviceRows, "Teenuseid pole."),
-          addServiceRow
-        ),
-        barberBlock,
-
         h("div", {},
           h("p", { class: "thr", text: "Tooted", style: "margin:0 0 10px" }),
           table("minmax(0,1fr) 96px 96px 28px",
