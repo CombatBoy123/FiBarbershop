@@ -964,10 +964,11 @@ export function viewPrices(actions) {
       })
     : [];
 
-  // Barbers themselves are added, renamed and removed under Kontod; this
-  // screen is only about what each of them charges.
+  // The price list the till charges: one barber's prices at a time. Barbers
+  // themselves are added, renamed and removed under Kontod. A new service is
+  // added here too, and every barber starts on the price it is given.
   const barberBlock = !picked
-    ? (isOwner() ? note("Barbereid pole. Lisa need Kontode all („Barberid“).", "margin:0") : null)
+    ? null
     : h("div", {},
         h("div", { style: "display:flex;justify-content:space-between;align-items:center;gap:12px;margin:0 0 10px;flex-wrap:wrap" },
           h("p", { class: "thr", text: "Barberi hinnad", style: "margin:0" }),
@@ -985,9 +986,10 @@ export function viewPrices(actions) {
         table("1fr 90px 70px 110px",
           ["Teenus", { label: "Tavahind", r: true }, { label: "Pakub", r: true }, { label: "Hind", r: true }],
           barberRows, "Teenuseid pole."),
+        addServiceRow,
         note("Need hinnad ilmuvad kassas, kui see barber on valitud. Märkeruudu eemaldamine " +
           "kriipsutab teenuse tema all läbi ja seda ei saa talle arvele lisada. " +
-          "Salongi enda tavahind ülal jääb puutumata." +
+          "Uus teenus alustab kõigil barberitel sama hinnaga." +
           (isOwner() ? " Barbereid lisad ja eemaldad Kontode all." : ""), "margin:10px 0 0")
       );
 
@@ -996,13 +998,19 @@ export function viewPrices(actions) {
 
     h("div", { class: "cols c2" },
       h("div", { class: "stack" },
-        h("div", {},
+        // With barbers there is one box: theirs. The shop's own list shows
+        // only when there is no barber's price to show, because then it is
+        // what the till charges.
+        barberBlock || h("div", {},
           h("p", { class: "thr", text: "Teenused", style: "margin:0 0 10px" }),
           table("minmax(0,1.4fr) 100px minmax(0,1fr) 28px",
             ["Teenus", { label: "Hind", r: true }, "Märkus", ""], serviceRows, "Teenuseid pole."),
-          addServiceRow
+          addServiceRow,
+          isOwner()
+            ? note("Barbereid pole, seega kassas kehtib see hind. Barbereid lisad Kontode all („Barberid“).",
+                "margin:10px 0 0")
+            : null
         ),
-        barberBlock,
 
         h("div", {},
           h("p", { class: "thr", text: "Tooted", style: "margin:0 0 10px" }),
