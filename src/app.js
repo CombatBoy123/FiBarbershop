@@ -1,5 +1,5 @@
 // app.js — the Express application: security headers, the JSON API, the
-// static files and the shop front. Built by a function rather than at require
+// static files and the till's page. Built by a function rather than at require
 // time, so the smoke test can run the real app in-process on a spare port.
 //
 // Everything under /api is scoped to the signed-in account's shop: two shops
